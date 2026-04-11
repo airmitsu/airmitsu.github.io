@@ -1,15 +1,24 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="ja">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#ffffff">
+  <meta charset="UTF-8" />
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1, viewport-fit=cover"
+  />
   <title>問題集PWA</title>
-  <link rel="manifest" href="manifest.webmanifest">
-  <link rel="stylesheet" href="style.css">
+  <meta name="theme-color" content="#4f6ddf" />
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <link rel="stylesheet" href="./style.css" />
 </head>
 <body>
-  <div id="app" class="app-shell"></div>
-  <script src="app.js"></script>
+  <div id="app" class="app">
+    <main class="container">
+      <div id="screen-home" class="screen"></div>
+      <div id="screen-quiz" class="screen hidden"></div>
+    </main>
+  </div>
+
+  <script src="./app.js"></script>
 </body>
 </html>

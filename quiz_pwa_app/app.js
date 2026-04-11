@@ -1,775 +1,963 @@
-(() => {
-  'use strict';
+const DEFAULT_TITLE = "問題集PWA";
+const DEFAULT_FONT_SIZE = 16;
+const FONT_SIZE_OPTIONS = [14, 16, 18, 20, 22, 24, 28];
 
-  const STORAGE_KEY = 'quizPwaState_v1_3';
-  const DEFAULT_TITLE = '問題集PWA';
-  const MODE_EXAM = 'exam';
-  const MODE_MASTER = 'master';
-  const SPECIAL_CHOICE_ID = '__unknown__';
+const STORAGE_KEYS = {
+  settings: "quizPwaSettings",
+  lastMode: "quizPwaLastMode",
+  pseudo: "quizPwaModePseudo",
+  master: "quizPwaModeMaster"
+};
 
-  const app = document.getElementById('app');
+const MODES = {
+  PSEUDO: "pseudo",
+  MASTER: "master"
+};
 
-  const state = {
-    ready: false,
-    problemSet: [],
-    title: DEFAULT_TITLE,
-    settings: {
-      fontScale: 1.0,
-    },
-    ui: {
-      currentScreen: 'home',
-      overlayText: '',
-    },
-    lastMode: null,
-    exam: createDefaultExamState(),
-    master: createDefaultMasterState(),
-  };
+const appState = {
+  title: DEFAULT_TITLE,
+  problems: [],
+  settings: {
+    fontSize: DEFAULT_FONT_SIZE
+  },
+  currentMode: null,
+  currentQuestionView: null,
+  pseudo: null,
+  master: null
+};
 
-  init().catch((err) => {
-    console.error(err);
-    app.innerHTML = '<div class="card"><div class="card-title">読み込みに失敗しました</div><div class="muted">ファイル配置を確認してください。</div></div>';
-  });
+const homeScreen = document.getElementById("screen-home");
+const quizScreen = document.getElementById("screen-quiz");
 
-  async function init() {
-    loadLocalState();
-    applyFontScale();
-    registerServiceWorker();
+document.addEventListener("DOMContentLoaded", init);
 
-    const [title, problemPaths] = await Promise.all([
-      loadTitle(),
-      loadProblemIndex(),
-    ]);
+async function init() {
+  loadSettings();
+  loadModeStates();
+  applyFontSize();
 
-    state.title = title;
-    document.title = title;
+  await loadTitle();
+  await loadProblems();
 
-    const problems = await loadProblems(problemPaths);
-    state.problemSet = problems;
+  renderHome();
 
-    repairStatesAfterProblemLoad();
+  const lastMode = localStorage.getItem(STORAGE_KEYS.lastMode);
+  if (lastMode === MODES.PSEUDO && hasPseudoResume()) {
+    startMode(MODES.PSEUDO, true);
+  } else if (lastMode === MODES.MASTER && hasMasterResume()) {
+    startMode(MODES.MASTER, true);
+  } else {
+    showHome();
+  }
 
-    if (!state.lastMode) {
-      state.ui.currentScreen = 'home';
-    } else {
-      state.ui.currentScreen = 'mode';
+  registerServiceWorker();
+}
+
+function loadSettings() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.settings);
+    if (!raw) return;
+    const parsed = JSON.parse(raw);
+    if (
+      parsed &&
+      typeof parsed.fontSize === "number" &&
+      FONT_SIZE_OPTIONS.includes(parsed.fontSize)
+    ) {
+      appState.settings.fontSize = parsed.fontSize;
     }
-
-    state.ready = true;
-    saveState();
-    render();
+  } catch (e) {
+    // 無視
   }
+}
 
-  function createDefaultExamState() {
-    return {
-      order: [],
-      currentIndex: 0,
-      answered: 0,
-      correct: 0,
-      totalAttempts: 0,
-      history: [],
-      currentQuestionAnswered: false,
-      currentQuestionResult: null,
-      currentQuestionSelectedId: null,
-      currentQuestionExplanation: '',
-      currentDisplayedChoices: [],
-    };
+function saveSettings() {
+  localStorage.setItem(STORAGE_KEYS.settings, JSON.stringify(appState.settings));
+}
+
+function applyFontSize() {
+  document.documentElement.style.setProperty(
+    "--question-font-size",
+    `${appState.settings.fontSize}px`
+  );
+}
+
+function loadModeStates() {
+  appState.pseudo = loadJson(STORAGE_KEYS.pseudo, null);
+  appState.master = loadJson(STORAGE_KEYS.master, null);
+}
+
+function saveModeState(mode) {
+  if (mode === MODES.PSEUDO) {
+    localStorage.setItem(STORAGE_KEYS.pseudo, JSON.stringify(appState.pseudo));
+  } else if (mode === MODES.MASTER) {
+    localStorage.setItem(STORAGE_KEYS.master, JSON.stringify(appState.master));
   }
+}
 
-  function createDefaultMasterState() {
-    return {
-      round: 1,
-      queue: [],
-      nextQueue: [],
-      currentIndex: 0,
-      answered: 0,
-      correct: 0,
-      totalAttempts: 0,
-      history: [],
-      currentQuestionAnswered: false,
-      currentQuestionResult: null,
-      currentQuestionSelectedId: null,
-      currentQuestionExplanation: '',
-      currentDisplayedChoices: [],
-      completed: false,
-    };
+function loadJson(key, fallback) {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return fallback;
+    return JSON.parse(raw);
+  } catch (e) {
+    return fallback;
   }
+}
 
-  function loadLocalState() {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return;
-      const saved = JSON.parse(raw);
-      if (saved && typeof saved === 'object') {
-        state.settings = { ...state.settings, ...(saved.settings || {}) };
-        state.lastMode = saved.lastMode || null;
-        state.exam = { ...createDefaultExamState(), ...(saved.exam || {}) };
-        state.master = { ...createDefaultMasterState(), ...(saved.master || {}) };
-      }
-    } catch (err) {
-      console.warn('state load failed', err);
-    }
-  }
-
-  function saveState() {
-    const payload = {
-      settings: state.settings,
-      lastMode: state.lastMode,
-      exam: state.exam,
-      master: state.master,
-    };
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
-  }
-
-  function applyFontScale() {
-    document.documentElement.style.fontSize = `${16 * state.settings.fontScale}px`;
-  }
-
-  async function loadTitle() {
-    try {
-      const text = await fetchText('title.txt');
-      const firstLine = (text.split(/\r?\n/)[0] || '').trim();
-      return firstLine || DEFAULT_TITLE;
-    } catch (_) {
-      return DEFAULT_TITLE;
-    }
-  }
-
-  async function loadProblemIndex() {
-    const res = await fetch('problems-index.json', { cache: 'no-cache' });
+async function loadTitle() {
+  try {
+    const res = await fetch("./title.txt", { cache: "no-store" });
     if (!res.ok) {
-      throw new Error('problems-index.json の読込失敗');
+      appState.title = DEFAULT_TITLE;
+      return;
     }
+    const text = await res.text();
+    const firstLine = (text.split(/\r?\n/)[0] || "").trim();
+    appState.title = firstLine || DEFAULT_TITLE;
+    document.title = appState.title;
+  } catch (e) {
+    appState.title = DEFAULT_TITLE;
+    document.title = DEFAULT_TITLE;
+  }
+}
+
+async function loadProblems() {
+  try {
+    const res = await fetch("./problems-index.json", { cache: "no-store" });
+    if (!res.ok) {
+      appState.problems = [];
+      return;
+    }
+
     const data = await res.json();
-    const problems = Array.isArray(data.problems) ? data.problems : [];
-    return problems.filter((p) => typeof p === 'string' && p.trim());
-  }
+    const paths = Array.isArray(data.problems) ? data.problems : [];
+    const loaded = [];
 
-  async function loadProblems(paths) {
-    const results = [];
-    for (const relativePath of paths) {
-      const problem = await loadSingleProblem(relativePath);
-      if (problem) results.push(problem);
-    }
-    return results;
-  }
-
-  async function loadSingleProblem(relativePath) {
-    try {
-      const raw = await fetchText(relativePath);
-      const parsed = parseProblemText(raw);
-      if (!parsed) return null;
-
-      const baseNoExt = relativePath.replace(/\.[^.]+$/, '');
-      const explainPath = baseNoExt.replace(/toi(\d+)$/i, 'kai$1') + '.txt';
-      const imagePath = await findFirstExistingImage(baseNoExt);
-
-      let explanation = '';
-      try {
-        explanation = await fetchText(explainPath);
-      } catch (_) {
-        explanation = '';
+    for (const relPath of paths) {
+      const problem = await loadSingleProblem(relPath);
+      if (problem) {
+        loaded.push(problem);
       }
-
-      const choices = parsed.choices.map((choiceText, idx) => ({
-        id: `c${idx + 1}`,
-        text: choiceText,
-        isCorrect: idx === parsed.correctIndex,
-      }));
-
-      return {
-        id: relativePath,
-        sourcePath: relativePath,
-        questionText: parsed.questionText,
-        choices,
-        explanation: explanation.trim(),
-        imagePath,
-      };
-    } catch (err) {
-      console.warn('problem skipped', relativePath, err);
-      return null;
     }
-  }
 
-  function parseProblemText(raw) {
-    const lines = raw
-      .split(/\r?\n/)
-      .map((line) => line.replace(/\uFEFF/g, ''))
-      .filter((line) => !line.trim().startsWith('##'));
+    appState.problems = loaded;
+  } catch (e) {
+    appState.problems = [];
+  }
+}
+
+async function loadSingleProblem(relPath) {
+  try {
+    const res = await fetch(`./${relPath}`, { cache: "no-store" });
+    if (!res.ok) return null;
+
+    const text = await res.text();
+    const rawLines = text.split(/\r?\n/);
+    const lines = rawLines
+      .map((line) => line.trim())
+      .filter((line) => line !== "" && !line.startsWith("##"));
 
     if (lines.length < 4) return null;
 
-    const questionText = (lines[0] || '').trim();
-    const rawAnswer = normalizeDigits((lines[1] || '').trim()).replace(/\s+/g, '');
-    const answerNum = Number(rawAnswer);
-    const choices = lines.slice(2).map((line) => line.trim()).filter(Boolean);
+    const questionText = lines[0].trim();
+    const answerRaw = normalizeDigits(lines[1]).trim();
+    const choices = lines.slice(2).map((v) => v.trim()).filter(Boolean);
 
-    if (!questionText || !Number.isInteger(answerNum) || choices.length < 2) return null;
-    if (answerNum < 1 || answerNum > choices.length) return null;
+    if (!questionText || choices.length < 2) return null;
+
+    const answerNumber = Number(answerRaw);
+    if (!Number.isInteger(answerNumber)) return null;
+    if (answerNumber < 1 || answerNumber > choices.length) return null;
+
+    const correctChoiceText = choices[answerNumber - 1];
+
+    const basePath = relPath.replace(/[^/]+$/, "");
+    const fileName = relPath.split("/").pop() || "";
+    const match = fileName.match(/^toi(\d+)\.txt$/i);
+    const indexNumber = match ? match[1] : null;
+
+    let explanation = "";
+    if (indexNumber) {
+      const kaiPath = `${basePath}kai${indexNumber}.txt`;
+      explanation = await tryLoadText(kaiPath);
+    }
+
+    let imagePath = null;
+    if (indexNumber) {
+      const imgBase = `${basePath}toi${indexNumber}`;
+      imagePath = await findExistingImage(imgBase);
+    }
 
     return {
+      sourcePath: relPath,
       questionText,
-      correctIndex: answerNum - 1,
       choices,
+      correctChoiceText,
+      explanation,
+      imagePath
+    };
+  } catch (e) {
+    return null;
+  }
+}
+
+async function tryLoadText(path) {
+  try {
+    const res = await fetch(`./${path}`, { cache: "no-store" });
+    if (!res.ok) return "";
+    return (await res.text()).trim();
+  } catch (e) {
+    return "";
+  }
+}
+
+async function findExistingImage(imgBase) {
+  const exts = ["jpg", "jpeg", "png"];
+  for (const ext of exts) {
+    const path = `${imgBase}.${ext}`;
+    try {
+      const res = await fetch(`./${path}`, {
+        method: "HEAD",
+        cache: "no-store"
+      });
+      if (res.ok) return `./${path}`;
+    } catch (e) {
+      // 次へ
+    }
+  }
+  return null;
+}
+
+function normalizeDigits(str) {
+  return str.replace(/[０-９]/g, (s) =>
+    String.fromCharCode(s.charCodeAt(0) - 0xfee0)
+  );
+}
+
+function renderHome() {
+  const pseudoStats = getPseudoHomeStats();
+  const masterStats = getMasterHomeStats();
+
+  homeScreen.innerHTML = `
+    <div class="page-header">
+      <h1 class="app-title">${escapeHtml(appState.title)}</h1>
+      <div class="page-subtitle">ホーム</div>
+    </div>
+
+    <div class="home-grid">
+      <section class="card mode-card">
+        <h2 class="card-title">疑似試験モード</h2>
+
+        <div class="stats-grid">
+          <div class="stat-box">
+            <div class="stat-label">正解率</div>
+            <div class="stat-value">${pseudoStats.accuracy}%</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-label">進行状況</div>
+            <div class="stat-value">${pseudoStats.progress}</div>
+          </div>
+        </div>
+
+        <div class="button-row">
+          <button class="btn btn-primary" id="btn-pseudo-start">
+            ${pseudoStats.canResume ? "続きから" : "開始"}
+          </button>
+          <button class="btn btn-secondary" id="btn-pseudo-reset">周回リセット</button>
+        </div>
+      </section>
+
+      <section class="card mode-card">
+        <h2 class="card-title">マスターモード</h2>
+
+        <div class="stats-grid">
+          <div class="stat-box">
+            <div class="stat-label">正解率</div>
+            <div class="stat-value">${masterStats.accuracy}%</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-label">進行状況</div>
+            <div class="stat-value">${masterStats.progress}</div>
+          </div>
+        </div>
+
+        <div class="button-row">
+          <button class="btn btn-primary" id="btn-master-start">
+            ${masterStats.canResume ? "続きから" : "開始"}
+          </button>
+          <button class="btn btn-secondary" id="btn-master-reset">周回リセット</button>
+        </div>
+      </section>
+    </div>
+
+    <section class="card settings-card">
+      <h2 class="card-title">共通設定</h2>
+
+      <div class="setting-row">
+        <label for="font-size-select" class="setting-label">文字サイズ</label>
+        <select id="font-size-select" class="select-control">
+          ${FONT_SIZE_OPTIONS.map(
+            (size) =>
+              `<option value="${size}" ${
+                size === appState.settings.fontSize ? "selected" : ""
+              }>${size}px</option>`
+          ).join("")}
+        </select>
+      </div>
+    </section>
+  `;
+
+  document
+    .getElementById("btn-pseudo-start")
+    .addEventListener("click", () => startMode(MODES.PSEUDO, true));
+
+  document
+    .getElementById("btn-master-start")
+    .addEventListener("click", () => startMode(MODES.MASTER, true));
+
+  document
+    .getElementById("btn-pseudo-reset")
+    .addEventListener("click", () => {
+      resetMode(MODES.PSEUDO);
+      renderHome();
+      showHome();
+    });
+
+  document
+    .getElementById("btn-master-reset")
+    .addEventListener("click", () => {
+      resetMode(MODES.MASTER);
+      renderHome();
+      showHome();
+    });
+
+  document
+    .getElementById("font-size-select")
+    .addEventListener("change", (e) => {
+      const value = Number(e.target.value);
+      if (FONT_SIZE_OPTIONS.includes(value)) {
+        appState.settings.fontSize = value;
+        saveSettings();
+        applyFontSize();
+        if (!quizScreen.classList.contains("hidden")) {
+          renderCurrentQuestion();
+        }
+      }
+    });
+}
+
+function getPseudoHomeStats() {
+  const state = appState.pseudo;
+  if (!state) {
+    return {
+      accuracy: "0.0",
+      progress: `0 / ${appState.problems.length}`,
+      canResume: false
     };
   }
 
-  function normalizeDigits(value) {
-    return value.replace(/[０-９]/g, (s) => String.fromCharCode(s.charCodeAt(0) - 0xFEE0));
+  const answered = state.answeredCount || 0;
+  const total = state.order ? state.order.length : appState.problems.length;
+  const accuracy = calcAccuracy(state.correctCount || 0, state.answerCount || 0);
+
+  return {
+    accuracy,
+    progress: `${Math.min(answered, total)} / ${total}`,
+    canResume: answered < total && total > 0
+  };
+}
+
+function getMasterHomeStats() {
+  const state = appState.master;
+  if (!state) {
+    return {
+      accuracy: "0.0",
+      progress: `第1周 / 残り${appState.problems.length}問`,
+      canResume: false
+    };
   }
 
-  async function fetchText(path) {
-    const res = await fetch(path, { cache: 'no-cache' });
-    if (!res.ok) throw new Error(`fetch failed: ${path}`);
-    return await res.text();
-  }
+  const accuracy = calcAccuracy(state.correctCount || 0, state.answerCount || 0);
+  const round = state.round || 1;
+  const remain = Array.isArray(state.pool) ? state.pool.length : 0;
 
-  async function findFirstExistingImage(baseNoExt) {
-    const exts = ['jpg', 'jpeg', 'png'];
-    for (const ext of exts) {
-      const path = `${baseNoExt}.${ext}`;
-      try {
-        const res = await fetch(path, { method: 'HEAD', cache: 'no-cache' });
-        if (res.ok) return path;
-      } catch (_) {
-      }
+  return {
+    accuracy,
+    progress: `第${round}周 / 残り${remain}問`,
+    canResume: remain > 0
+  };
+}
+
+function calcAccuracy(correct, total) {
+  if (!total) return "0.0";
+  return ((correct / total) * 100).toFixed(1);
+}
+
+function resetMode(mode) {
+  if (mode === MODES.PSEUDO) {
+    appState.pseudo = null;
+    localStorage.removeItem(STORAGE_KEYS.pseudo);
+    if (appState.currentMode === MODES.PSEUDO) {
+      appState.currentMode = null;
     }
-    return '';
-  }
-
-  function repairStatesAfterProblemLoad() {
-    const allIds = state.problemSet.map((p) => p.id);
-
-    state.exam.order = sanitizeIdList(state.exam.order, allIds);
-    if (state.exam.order.length === 0 && allIds.length > 0) {
-      state.exam.order = shuffled([...allIds]);
-      state.exam.currentIndex = 0;
-      clearCurrentQuestionState(state.exam);
-    }
-    if (state.exam.currentIndex >= state.exam.order.length) {
-      state.exam.currentIndex = Math.max(0, state.exam.order.length - 1);
-    }
-
-    state.master.queue = sanitizeIdList(state.master.queue, allIds);
-    state.master.nextQueue = sanitizeIdList(state.master.nextQueue, allIds);
-    if (state.master.queue.length === 0 && !state.master.completed && allIds.length > 0) {
-      state.master.queue = shuffled([...allIds]);
-      state.master.currentIndex = 0;
-      state.master.round = Math.max(1, state.master.round || 1);
-      clearCurrentQuestionState(state.master);
-    }
-    if (state.master.currentIndex >= state.master.queue.length) {
-      state.master.currentIndex = Math.max(0, state.master.queue.length - 1);
-    }
-  }
-
-  function sanitizeIdList(ids, validIds) {
-    const set = new Set(validIds);
-    return Array.isArray(ids) ? ids.filter((id) => set.has(id)) : [];
-  }
-
-  function render() {
-    applyFontScale();
-    if (!state.ready) return;
-
-    const body = state.ui.currentScreen === 'home'
-      ? renderHome()
-      : renderModeScreen();
-
-    app.innerHTML = body + renderOverlay();
-    bindCommonEvents();
-
-    if (state.ui.currentScreen !== 'home') {
-      bindModeEvents();
+  } else if (mode === MODES.MASTER) {
+    appState.master = null;
+    localStorage.removeItem(STORAGE_KEYS.master);
+    if (appState.currentMode === MODES.MASTER) {
+      appState.currentMode = null;
     }
   }
+  appState.currentQuestionView = null;
+  localStorage.removeItem(STORAGE_KEYS.lastMode);
+}
 
-  function renderHome() {
-    return `
-      <div class="header-row">
-        <div>
-          <div class="screen-title">${escapeHtml(state.title)}</div>
-          <div class="screen-subtitle">ホーム</div>
-        </div>
-      </div>
+function hasPseudoResume() {
+  if (!appState.pseudo || !Array.isArray(appState.pseudo.order)) return false;
+  return (appState.pseudo.answeredCount || 0) < appState.pseudo.order.length;
+}
 
-      <div class="home-grid">
-        ${renderHomeCard(MODE_EXAM)}
-        ${renderHomeCard(MODE_MASTER)}
-      </div>
+function hasMasterResume() {
+  if (!appState.master || !Array.isArray(appState.master.pool)) return false;
+  return appState.master.pool.length > 0;
+}
 
-      <div class="card" style="margin-top:14px;">
-        <div class="card-title">共通設定</div>
-        <div class="settings-row">
-          <label for="fontScale">文字サイズ</label>
-          <select id="fontScale">
-            ${renderFontOptions()}
-          </select>
-        </div>
-      </div>
-    `;
+function showHome() {
+  quizScreen.classList.add("hidden");
+  homeScreen.classList.remove("hidden");
+  renderHome();
+}
+
+function showQuiz() {
+  homeScreen.classList.add("hidden");
+  quizScreen.classList.remove("hidden");
+}
+
+function startMode(mode, allowResume) {
+  if (!appState.problems.length) {
+    alert("問題が見つかりません。problems-index.json と問題ファイルを確認してください。");
+    return;
   }
 
-  function renderHomeCard(mode) {
-    const s = mode === MODE_EXAM ? state.exam : state.master;
-    const rate = formatRate(s.correct, s.totalAttempts);
+  appState.currentMode = mode;
+  localStorage.setItem(STORAGE_KEYS.lastMode, mode);
 
-    let progressText = '';
-    if (mode === MODE_EXAM) {
-      const total = state.problemSet.length;
-      const current = total === 0 ? 0 : Math.min(s.currentIndex + 1, total);
-      progressText = `${current} / ${total}`;
-    } else {
-      progressText = s.completed ? `完了` : `第${s.round}周 / 残り${getMasterRemainingCount()}問`;
+  if (mode === MODES.PSEUDO) {
+    if (!allowResume || !hasPseudoResume()) {
+      initPseudoMode();
     }
-
-    return `
-      <div class="card">
-        <div class="card-title">${mode === MODE_EXAM ? '疑似試験モード' : 'マスターモード'}</div>
-        <div class="stats">
-          <div class="stat">
-            <div class="stat-label">正解率</div>
-            <div class="stat-value">${rate}</div>
-          </div>
-          <div class="stat">
-            <div class="stat-label">進行状況</div>
-            <div class="stat-value">${escapeHtml(progressText)}</div>
-          </div>
-        </div>
-        <div class="btn-row">
-          <button class="primary" data-action="start-mode" data-mode="${mode}">${getContinueLabel(mode)}</button>
-          <button class="danger" data-action="reset-mode" data-mode="${mode}">周回リセット</button>
-        </div>
-      </div>
-    `;
-  }
-
-  function renderFontOptions() {
-    const options = [
-      { value: 0.9, label: '小' },
-      { value: 1.0, label: '標準' },
-      { value: 1.15, label: '大' },
-      { value: 1.3, label: '特大' },
-    ];
-    return options.map((opt) => {
-      const selected = Number(state.settings.fontScale) === opt.value ? 'selected' : '';
-      return `<option value="${opt.value}" ${selected}>${opt.label}</option>`;
-    }).join('');
-  }
-
-  function renderModeScreen() {
-    const mode = state.lastMode;
-    const s = mode === MODE_EXAM ? state.exam : state.master;
-    const question = getCurrentQuestion(mode);
-
-    if (!question) {
-      return `
-        <div class="header-row">
-          <div>
-            <div class="screen-title">${mode === MODE_EXAM ? '疑似試験モード' : 'マスターモード'}</div>
-            <div class="screen-subtitle">出題できる問題がありません</div>
-          </div>
-          <button data-action="go-home">ホーム</button>
-        </div>
-        <div class="card">問題ファイルを確認してください。</div>
-      `;
-    }
-
-    const choices = getDisplayedChoices(mode, question);
-    const rate = formatRate(s.correct, s.totalAttempts);
-
-    return `
-      <div class="header-row">
-        <div>
-          <div class="screen-title">${mode === MODE_EXAM ? '疑似試験モード' : 'マスターモード'}</div>
-          <div class="screen-subtitle">${escapeHtml(renderModeMeta(mode))}</div>
-        </div>
-        <button data-action="go-home">ホーム</button>
-      </div>
-
-      <div class="card">
-        <div class="top-actions">
-          ${renderModeStats(mode, rate)}
-        </div>
-
-        ${question.imagePath ? renderImageBox(question.imagePath) : ''}
-
-        <div class="question-text">${escapeHtml(question.questionText)}</div>
-
-        <div class="choices">
-          ${choices.map((choice) => renderChoiceButton(choice, s)).join('')}
-        </div>
-
-        ${s.currentQuestionAnswered ? renderExplanationBox(s) : ''}
-
-        <div class="footer-row">
-          <div class="muted">${s.currentQuestionAnswered ? '採点済み' : '未回答'}</div>
-          <button class="primary" data-action="next-question" ${s.currentQuestionAnswered ? '' : 'disabled'}>次へ</button>
-        </div>
-      </div>
-    `;
-  }
-
-  function renderModeStats(mode, rate) {
-    const s = mode === MODE_EXAM ? state.exam : state.master;
-    if (mode === MODE_EXAM) {
-      return `
-        <div class="stat"><div class="stat-label">回答数（今回）</div><div class="stat-value">${s.answered}</div></div>
-        <div class="stat"><div class="stat-label">正解率（今回累積）</div><div class="stat-value">${rate}</div></div>
-      `;
-    }
-    return `
-      <div class="stat"><div class="stat-label">現在周回</div><div class="stat-value">${s.round}</div></div>
-      <div class="stat"><div class="stat-label">残り問題数</div><div class="stat-value">${getMasterRemainingCount()}</div></div>
-      <div class="stat"><div class="stat-label">正解率</div><div class="stat-value">${rate}</div></div>
-    `;
-  }
-
-  function renderModeMeta(mode) {
-    if (mode === MODE_EXAM) {
-      return `全${state.problemSet.length}問`;
-    }
-    if (state.master.completed) {
-      return '完了';
-    }
-    return `第${state.master.round}周`;
-  }
-
-  function renderChoiceButton(choice, s) {
-    const answered = s.currentQuestionAnswered;
-    let className = 'choice-btn';
-
-    if (choice.id === SPECIAL_CHOICE_ID) {
-      className += ' special';
-    }
-
-    if (answered) {
-      if (choice.isCorrect) className += ' correct';
-      if (s.currentQuestionSelectedId === choice.id && !choice.isCorrect) className += ' incorrect';
-    }
-
-    return `<button class="${className}" data-action="answer" data-choice-id="${choice.id}" ${answered ? 'disabled' : ''}>${escapeHtml(choice.text)}</button>`;
-  }
-
-  function renderExplanationBox(s) {
-    const label = s.currentQuestionResult === 'correct' ? '正解' : '間違い';
-    const body = s.currentQuestionExplanation ? escapeHtml(s.currentQuestionExplanation) : '解説なし';
-    return `<div class="explain-box"><strong>${label}</strong><br>${body}</div>`;
-  }
-
-  function renderImageBox(path) {
-    return `
-      <div class="image-wrap">
-        <div class="image-stage" id="imageStage">
-          <img id="questionImage" class="zoomable" src="${encodeURI(path)}" alt="問題画像">
-        </div>
-        <div class="image-controls">
-          <button data-action="zoom-out">－</button>
-          <button data-action="zoom-reset">戻す</button>
-          <button data-action="zoom-in">＋</button>
-        </div>
-      </div>
-    `;
-  }
-
-  function renderOverlay() {
-    return `<div class="overlay ${state.ui.overlayText ? '' : 'hidden'}" id="resultOverlay">${escapeHtml(state.ui.overlayText)}</div>`;
-  }
-
-  function bindCommonEvents() {
-    app.querySelectorAll('[data-action]').forEach((el) => {
-      el.addEventListener('click', handleActionClick);
-    });
-
-    const fontScale = document.getElementById('fontScale');
-    if (fontScale) {
-      fontScale.addEventListener('change', () => {
-        state.settings.fontScale = Number(fontScale.value) || 1.0;
-        applyFontScale();
-        saveState();
-        render();
-      });
+  } else if (mode === MODES.MASTER) {
+    if (!allowResume || !hasMasterResume()) {
+      initMasterMode();
     }
   }
 
-  function bindModeEvents() {
-    initImageZoom();
+  renderCurrentQuestion();
+  showQuiz();
+}
+
+function initPseudoMode() {
+  const order = shuffle(
+    appState.problems.map((_, index) => index)
+  );
+
+  appState.pseudo = {
+    order,
+    answeredCount: 0,
+    answerCount: 0,
+    correctCount: 0,
+    currentQuestionShuffledChoices: null,
+    currentCorrectIndex: null,
+    currentAnswered: false,
+    currentSelectedIndex: null,
+    currentResult: null
+  };
+
+  saveModeState(MODES.PSEUDO);
+}
+
+function initMasterMode() {
+  const pool = shuffle(
+    appState.problems.map((_, index) => index)
+  );
+
+  appState.master = {
+    round: 1,
+    pool,
+    cursor: 0,
+    nextRoundPool: [],
+    answerCount: 0,
+    correctCount: 0,
+    currentQuestionShuffledChoices: null,
+    currentCorrectIndex: null,
+    currentAnswered: false,
+    currentSelectedIndex: null,
+    currentResult: null
+  };
+
+  saveModeState(MODES.MASTER);
+}
+
+function renderCurrentQuestion() {
+  if (appState.currentMode === MODES.PSEUDO) {
+    renderPseudoQuestion();
+  } else if (appState.currentMode === MODES.MASTER) {
+    renderMasterQuestion();
+  }
+}
+
+function renderPseudoQuestion() {
+  const state = appState.pseudo;
+  if (!state) {
+    showHome();
+    return;
   }
 
-  function handleActionClick(event) {
-    const button = event.currentTarget;
-    const action = button.dataset.action;
-    const mode = button.dataset.mode;
+  const total = state.order.length;
+  const answered = state.answeredCount;
 
-    switch (action) {
-      case 'start-mode':
-        startMode(mode);
-        break;
-      case 'reset-mode':
-        resetMode(mode);
-        break;
-      case 'go-home':
-        state.ui.currentScreen = 'home';
-        saveState();
-        render();
-        break;
-      case 'answer':
-        answerCurrentQuestion(button.dataset.choiceId);
-        break;
-      case 'next-question':
-        moveNextQuestion();
-        break;
-      case 'zoom-in':
-        updateZoom(0.25);
-        break;
-      case 'zoom-out':
-        updateZoom(-0.25);
-        break;
-      case 'zoom-reset':
-        resetZoom();
-        break;
-      default:
-        break;
-    }
+  if (answered >= total) {
+    finishPseudoMode();
+    return;
   }
 
-  function startMode(mode) {
-    state.lastMode = mode;
-    state.ui.currentScreen = 'mode';
+  const problemIndex = state.order[answered];
+  const problem = appState.problems[problemIndex];
 
-    if (mode === MODE_EXAM && state.exam.order.length === 0 && state.problemSet.length > 0) {
-      state.exam.order = shuffled(state.problemSet.map((p) => p.id));
-    }
-    if (mode === MODE_MASTER && state.master.queue.length === 0 && !state.master.completed && state.problemSet.length > 0) {
-      state.master.queue = shuffled(state.problemSet.map((p) => p.id));
-    }
+  ensurePreparedQuestion(state, problem);
 
-    saveState();
-    render();
+  const accuracy = calcAccuracy(state.correctCount, state.answerCount);
+  renderQuestionLayout({
+    title: appState.title,
+    modeLabel: "疑似試験モード",
+    subInfo: `全${total}問`,
+    statItems: [
+      { label: "回答数（今回）", value: String(state.answerCount) },
+      { label: "正解率（今回累積）", value: `${accuracy}%` }
+    ],
+    question: problem,
+    choices: state.currentQuestionShuffledChoices,
+    answered: state.currentAnswered,
+    selectedIndex: state.currentSelectedIndex,
+    result: state.currentResult,
+    explanation: problem.explanation,
+    footerText: answered === total - 1 ? "最終問題" : "未回答",
+    nextLabel: answered === total - 1 ? "終了" : "次へ",
+    onChoice: (index) => handlePseudoAnswer(index),
+    onNext: () => handlePseudoNext()
+  });
+}
+
+function renderMasterQuestion() {
+  const state = appState.master;
+  if (!state) {
+    showHome();
+    return;
   }
 
-  function resetMode(mode) {
-    if (mode === MODE_EXAM) {
-      state.exam = createDefaultExamState();
-      state.exam.order = shuffled(state.problemSet.map((p) => p.id));
-    } else {
-      state.master = createDefaultMasterState();
-      state.master.queue = shuffled(state.problemSet.map((p) => p.id));
-    }
-    saveState();
-    render();
+  if (state.pool.length === 0) {
+    finishMasterMode();
+    return;
   }
 
-  function getContinueLabel(mode) {
-    const s = mode === MODE_EXAM ? state.exam : state.master;
-    const hasProgress = s.answered > 0 || (mode === MODE_EXAM ? s.currentIndex > 0 : s.round > 1 || s.currentIndex > 0);
-    return hasProgress ? '続きから' : '開始';
-  }
-
-  function getCurrentQuestion(mode) {
-    const questionId = mode === MODE_EXAM
-      ? state.exam.order[state.exam.currentIndex]
-      : state.master.queue[state.master.currentIndex];
-    return state.problemSet.find((p) => p.id === questionId) || null;
-  }
-
-  function getDisplayedChoices(mode, question) {
-    const s = mode === MODE_EXAM ? state.exam : state.master;
-    if (Array.isArray(s.currentDisplayedChoices) && s.currentDisplayedChoices.length > 0) {
-      const map = new Map(question.choices.map((c) => [c.id, c]));
-      return s.currentDisplayedChoices.map((id) => {
-        if (id === SPECIAL_CHOICE_ID) return { id: SPECIAL_CHOICE_ID, text: '？', isCorrect: false };
-        return map.get(id);
-      }).filter(Boolean);
-    }
-
-    const normal = shuffled(question.choices.map((c) => ({ ...c })));
-    const result = [
-      { id: SPECIAL_CHOICE_ID, text: '？', isCorrect: false },
-      ...normal,
-    ];
-    s.currentDisplayedChoices = result.map((c) => c.id);
-    saveState();
-    return result;
-  }
-
-  function answerCurrentQuestion(selectedId) {
-    const mode = state.lastMode;
-    const s = mode === MODE_EXAM ? state.exam : state.master;
-    if (s.currentQuestionAnswered) return;
-
-    const question = getCurrentQuestion(mode);
-    if (!question) return;
-
-    const chosen = selectedId === SPECIAL_CHOICE_ID
-      ? { id: SPECIAL_CHOICE_ID, text: '？', isCorrect: false }
-      : question.choices.find((c) => c.id === selectedId);
-
-    if (!chosen) return;
-
-    const isCorrect = !!chosen.isCorrect;
-    s.currentQuestionAnswered = true;
-    s.currentQuestionSelectedId = selectedId;
-    s.currentQuestionResult = isCorrect ? 'correct' : 'incorrect';
-    s.currentQuestionExplanation = question.explanation || '';
-    s.totalAttempts += 1;
-    s.answered += 1;
-    if (isCorrect) s.correct += 1;
-    s.history.push({
-      questionId: question.id,
-      selectedId,
-      isCorrect,
-      ts: Date.now(),
-      round: mode === MODE_MASTER ? s.round : undefined,
-    });
-
-    if (mode === MODE_MASTER && !isCorrect) {
-      if (!s.nextQueue.includes(question.id)) {
-        s.nextQueue.push(question.id);
-      }
-    }
-
-    state.ui.overlayText = isCorrect ? '正解' : '間違い';
-    saveState();
-    render();
-
-    setTimeout(() => {
-      state.ui.overlayText = '';
-      render();
-    }, 900);
-  }
-
-  function moveNextQuestion() {
-    const mode = state.lastMode;
-    const s = mode === MODE_EXAM ? state.exam : state.master;
-    if (!s.currentQuestionAnswered) return;
-
-    if (mode === MODE_EXAM) {
-      if (s.currentIndex < s.order.length - 1) {
-        s.currentIndex += 1;
-      }
-    } else {
-      if (s.currentIndex < s.queue.length - 1) {
-        s.currentIndex += 1;
-      } else {
-        finishMasterRound();
-      }
-    }
-
-    clearCurrentQuestionState(s);
-    saveState();
-    render();
-  }
-
-  function finishMasterRound() {
-    const s = state.master;
-    if (s.nextQueue.length === 0) {
-      s.completed = true;
-      s.queue = [];
-      s.currentIndex = 0;
+  if (state.cursor >= state.pool.length) {
+    if (state.nextRoundPool.length === 0) {
+      finishMasterMode();
       return;
     }
-    s.queue = shuffled([...s.nextQueue]);
-    s.nextQueue = [];
-    s.currentIndex = 0;
-    s.round += 1;
+
+    state.pool = shuffle([...state.nextRoundPool]);
+    state.nextRoundPool = [];
+    state.cursor = 0;
+    state.round += 1;
+    clearPreparedQuestion(state);
+    saveModeState(MODES.MASTER);
   }
 
-  function clearCurrentQuestionState(modeState) {
-    modeState.currentQuestionAnswered = false;
-    modeState.currentQuestionResult = null;
-    modeState.currentQuestionSelectedId = null;
-    modeState.currentQuestionExplanation = '';
-    modeState.currentDisplayedChoices = [];
+  const problemIndex = state.pool[state.cursor];
+  const problem = appState.problems[problemIndex];
+
+  ensurePreparedQuestion(state, problem);
+
+  const accuracy = calcAccuracy(state.correctCount, state.answerCount);
+  const remain = state.pool.length - state.cursor;
+
+  renderQuestionLayout({
+    title: appState.title,
+    modeLabel: "マスターモード",
+    subInfo: `第${state.round}周 / 残り${remain}問`,
+    statItems: [
+      { label: "残り問題数", value: String(remain) },
+      { label: "正解率", value: `${accuracy}%` }
+    ],
+    question: problem,
+    choices: state.currentQuestionShuffledChoices,
+    answered: state.currentAnswered,
+    selectedIndex: state.currentSelectedIndex,
+    result: state.currentResult,
+    explanation: problem.explanation,
+    footerText: state.currentAnswered ? "" : "未回答",
+    nextLabel: remain === 1 && state.nextRoundPool.length === 0 ? "完了確認" : "次へ",
+    onChoice: (index) => handleMasterAnswer(index),
+    onNext: () => handleMasterNext()
+  });
+}
+
+function renderQuestionLayout({
+  title,
+  modeLabel,
+  subInfo,
+  statItems,
+  question,
+  choices,
+  answered,
+  selectedIndex,
+  result,
+  explanation,
+  footerText,
+  nextLabel,
+  onChoice,
+  onNext
+}) {
+  quizScreen.innerHTML = `
+    <div class="quiz-page card">
+      <div class="quiz-header">
+        <div class="quiz-header-left">
+          <div class="quiz-app-title">${escapeHtml(title)}</div>
+          <h1 class="quiz-mode-title">${escapeHtml(modeLabel)}</h1>
+          <div class="quiz-subinfo">${escapeHtml(subInfo)}</div>
+        </div>
+        <div class="quiz-header-right">
+          <button class="btn btn-home" id="btn-home">ホーム</button>
+        </div>
+      </div>
+
+      <div class="stats-grid quiz-stats">
+        ${statItems
+          .map(
+            (item) => `
+          <div class="stat-box">
+            <div class="stat-label">${escapeHtml(item.label)}</div>
+            <div class="stat-value">${escapeHtml(item.value)}</div>
+          </div>
+        `
+          )
+          .join("")}
+      </div>
+
+      <div class="question-block">
+        <div class="question-text">${escapeHtml(question.questionText)}</div>
+
+        ${
+          question.imagePath
+            ? `
+          <div class="question-image-wrap">
+            <img
+              src="${question.imagePath}"
+              alt="問題画像"
+              class="question-image"
+              id="question-image"
+            />
+          </div>
+        `
+            : ""
+        }
+      </div>
+
+      <div class="choices">
+        ${choices
+          .map((choice, index) => {
+            const selectedClass = selectedIndex === index ? " selected" : "";
+            const disabledAttr = answered ? "disabled" : "";
+            return `
+              <button
+                class="choice-btn${selectedClass}"
+                data-choice-index="${index}"
+                ${disabledAttr}
+              >
+                ${escapeHtml(choice)}
+              </button>
+            `;
+          })
+          .join("")}
+      </div>
+
+      ${
+        answered
+          ? `
+        <div class="result-panel ${result === "correct" ? "correct" : "wrong"}">
+          ${result === "correct" ? "正解" : "間違い"}
+        </div>
+      `
+          : ""
+      }
+
+      ${
+        answered && explanation
+          ? `
+        <div class="explanation-block">
+          <div class="explanation-title">解説</div>
+          <div class="explanation-body">${escapeHtml(explanation).replace(/\n/g, "<br>")}</div>
+        </div>
+      `
+          : ""
+      }
+
+      <div class="quiz-footer">
+        <div class="quiz-footer-left">${escapeHtml(footerText)}</div>
+        <button class="btn btn-next" id="btn-next" ${answered ? "" : "disabled"}>
+          ${escapeHtml(nextLabel)}
+        </button>
+      </div>
+    </div>
+  `;
+
+  document.getElementById("btn-home").addEventListener("click", () => {
+    renderHome();
+    showHome();
+  });
+
+  document.querySelectorAll("[data-choice-index]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const index = Number(btn.dataset.choiceIndex);
+      onChoice(index);
+    });
+  });
+
+  document.getElementById("btn-next").addEventListener("click", onNext);
+
+  const img = document.getElementById("question-image");
+  if (img) {
+    enableImageZoomPan(img);
+  }
+}
+
+function ensurePreparedQuestion(state, problem) {
+  if (Array.isArray(state.currentQuestionShuffledChoices)) {
+    return;
   }
 
-  function getMasterRemainingCount() {
-    if (state.master.completed) return 0;
-    return Math.max(0, state.master.queue.length - state.master.currentIndex);
+  const choices = ["？ わからない", ...problem.choices];
+  const realChoices = choices.slice(1);
+  const shuffledReal = shuffle(realChoices);
+
+  const shuffledChoices = ["？ わからない", ...shuffledReal];
+  const correctIndex = shuffledChoices.findIndex(
+    (choice) => choice === problem.correctChoiceText
+  );
+
+  state.currentQuestionShuffledChoices = shuffledChoices;
+  state.currentCorrectIndex = correctIndex;
+  state.currentAnswered = false;
+  state.currentSelectedIndex = null;
+  state.currentResult = null;
+
+  saveModeState(appState.currentMode);
+}
+
+function clearPreparedQuestion(state) {
+  state.currentQuestionShuffledChoices = null;
+  state.currentCorrectIndex = null;
+  state.currentAnswered = false;
+  state.currentSelectedIndex = null;
+  state.currentResult = null;
+}
+
+function handlePseudoAnswer(selectedIndex) {
+  const state = appState.pseudo;
+  if (!state || state.currentAnswered) return;
+
+  state.currentAnswered = true;
+  state.currentSelectedIndex = selectedIndex;
+  state.answerCount += 1;
+
+  const isCorrect = selectedIndex === state.currentCorrectIndex;
+  if (isCorrect) {
+    state.correctCount += 1;
+    state.currentResult = "correct";
+  } else {
+    state.currentResult = "wrong";
   }
 
-  function formatRate(correct, total) {
-    if (!total) return '0.0%';
-    return `${((correct / total) * 100).toFixed(1)}%`;
+  saveModeState(MODES.PSEUDO);
+  renderPseudoQuestion();
+}
+
+function handlePseudoNext() {
+  const state = appState.pseudo;
+  if (!state || !state.currentAnswered) return;
+
+  state.answeredCount += 1;
+  clearPreparedQuestion(state);
+  saveModeState(MODES.PSEUDO);
+
+  if (state.answeredCount >= state.order.length) {
+    finishPseudoMode();
+  } else {
+    renderPseudoQuestion();
+  }
+}
+
+function handleMasterAnswer(selectedIndex) {
+  const state = appState.master;
+  if (!state || state.currentAnswered) return;
+
+  state.currentAnswered = true;
+  state.currentSelectedIndex = selectedIndex;
+  state.answerCount += 1;
+
+  const isCorrect = selectedIndex === state.currentCorrectIndex;
+  if (isCorrect) {
+    state.correctCount += 1;
+    state.currentResult = "correct";
+  } else {
+    state.currentResult = "wrong";
+    const problemIndex = state.pool[state.cursor];
+    state.nextRoundPool.push(problemIndex);
   }
 
-  function shuffled(arr) {
-    const copy = [...arr];
-    for (let i = copy.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [copy[i], copy[j]] = [copy[j], copy[i]];
-    }
-    return copy;
-  }
+  saveModeState(MODES.MASTER);
+  renderMasterQuestion();
+}
 
-  function escapeHtml(value) {
-    return String(value)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;');
-  }
+function handleMasterNext() {
+  const state = appState.master;
+  if (!state || !state.currentAnswered) return;
 
-  function registerServiceWorker() {
-    if ('serviceWorker' in navigator) {
-      window.addEventListener('load', () => {
-        navigator.serviceWorker.register('./sw.js').catch((err) => {
-          console.warn('SW registration failed', err);
-        });
+  state.cursor += 1;
+  clearPreparedQuestion(state);
+  saveModeState(MODES.MASTER);
+  renderMasterQuestion();
+}
+
+function finishPseudoMode() {
+  const accuracy = calcAccuracy(
+    appState.pseudo?.correctCount || 0,
+    appState.pseudo?.answerCount || 0
+  );
+
+  alert(`疑似試験モードが終了しました。正解率は ${accuracy}% です。`);
+
+  appState.pseudo = null;
+  localStorage.removeItem(STORAGE_KEYS.pseudo);
+  localStorage.removeItem(STORAGE_KEYS.lastMode);
+  appState.currentMode = null;
+  appState.currentQuestionView = null;
+
+  renderHome();
+  showHome();
+}
+
+function finishMasterMode() {
+  const accuracy = calcAccuracy(
+    appState.master?.correctCount || 0,
+    appState.master?.answerCount || 0
+  );
+
+  alert(`マスターモードが完了しました。正解率は ${accuracy}% です。`);
+
+  appState.master = {
+    round: 1,
+    pool: [],
+    cursor: 0,
+    nextRoundPool: [],
+    answerCount: appState.master?.answerCount || 0,
+    correctCount: appState.master?.correctCount || 0,
+    currentQuestionShuffledChoices: null,
+    currentCorrectIndex: null,
+    currentAnswered: false,
+    currentSelectedIndex: null,
+    currentResult: null
+  };
+
+  saveModeState(MODES.MASTER);
+  localStorage.removeItem(STORAGE_KEYS.lastMode);
+  appState.currentMode = null;
+  renderHome();
+  showHome();
+}
+
+function shuffle(arr) {
+  const copy = [...arr];
+  for (let i = copy.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+  return copy;
+}
+
+function escapeHtml(str) {
+  return String(str)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function registerServiceWorker() {
+  if ("serviceWorker" in navigator) {
+    window.addEventListener("load", () => {
+      navigator.serviceWorker.register("./sw.js").catch(() => {
+        // 無視
       });
-    }
+    });
   }
+}
 
-  let zoomState = { scale: 1, x: 0, y: 0, active: false, startX: 0, startY: 0 };
+function enableImageZoomPan(img) {
+  let scale = 1;
+  let translateX = 0;
+  let translateY = 0;
+  let isDragging = false;
+  let startX = 0;
+  let startY = 0;
 
-  function initImageZoom() {
-    const img = document.getElementById('questionImage');
-    const stage = document.getElementById('imageStage');
-    if (!img || !stage) return;
+  const applyTransform = () => {
+    img.style.transform = `translate(${translateX}px, ${translateY}px) scale(${scale})`;
+  };
 
-    applyTransform();
-
-    stage.addEventListener('pointerdown', (e) => {
-      zoomState.active = true;
-      zoomState.startX = e.clientX - zoomState.x;
-      zoomState.startY = e.clientY - zoomState.y;
-      stage.setPointerCapture(e.pointerId);
-    });
-    stage.addEventListener('pointermove', (e) => {
-      if (!zoomState.active) return;
-      zoomState.x = e.clientX - zoomState.startX;
-      zoomState.y = e.clientY - zoomState.startY;
-      applyTransform();
-    });
-    stage.addEventListener('pointerup', () => {
-      zoomState.active = false;
-    });
-    stage.addEventListener('pointercancel', () => {
-      zoomState.active = false;
-    });
-    stage.addEventListener('wheel', (e) => {
+  img.addEventListener(
+    "wheel",
+    (e) => {
       e.preventDefault();
-      updateZoom(e.deltaY < 0 ? 0.15 : -0.15);
-    }, { passive: false });
-  }
+      const delta = e.deltaY < 0 ? 0.15 : -0.15;
+      scale = Math.min(4, Math.max(1, scale + delta));
+      if (scale === 1) {
+        translateX = 0;
+        translateY = 0;
+      }
+      applyTransform();
+    },
+    { passive: false }
+  );
 
-  function updateZoom(delta) {
-    zoomState.scale = clamp(zoomState.scale + delta, 1, 4);
+  img.addEventListener("pointerdown", (e) => {
+    if (scale <= 1) return;
+    isDragging = true;
+    startX = e.clientX - translateX;
+    startY = e.clientY - translateY;
+    img.setPointerCapture(e.pointerId);
+  });
+
+  img.addEventListener("pointermove", (e) => {
+    if (!isDragging) return;
+    translateX = e.clientX - startX;
+    translateY = e.clientY - startY;
     applyTransform();
-  }
+  });
 
-  function resetZoom() {
-    zoomState = { scale: 1, x: 0, y: 0, active: false, startX: 0, startY: 0 };
+  img.addEventListener("pointerup", () => {
+    isDragging = false;
+  });
+
+  img.addEventListener("pointercancel", () => {
+    isDragging = false;
+  });
+
+  img.addEventListener("dblclick", () => {
+    scale = 1;
+    translateX = 0;
+    translateY = 0;
     applyTransform();
-  }
-
-  function applyTransform() {
-    const img = document.getElementById('questionImage');
-    if (!img) return;
-    img.style.transform = `translate(${zoomState.x}px, ${zoomState.y}px) scale(${zoomState.scale})`;
-  }
-
-  function clamp(v, min, max) {
-    return Math.min(max, Math.max(min, v));
-  }
-})();
+  });
+}
