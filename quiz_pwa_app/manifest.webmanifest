@@ -1,6 +1,6 @@
 {
-  "name": "問題集PWA",
-  "short_name": "問題集",
+  "name": "測量士補 令和5年 問題集",
+  "short_name": "測量R5",
   "start_url": "./",
   "display": "standalone",
   "background_color": "#ffffff",
