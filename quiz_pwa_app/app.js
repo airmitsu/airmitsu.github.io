@@ -363,14 +363,17 @@ function getPseudoHomeStats() {
     };
   }
 
-  const answered = state.answeredCount || 0;
   const total = state.order ? state.order.length : appState.problems.length;
-  const accuracy = calcAccuracy(state.correctCount || 0, state.answerCount || 0);
+  const answered = state.answeredCount || 0;
+  const answerCount = state.answerCount || 0;
+  const correctCount = state.correctCount || 0;
+  const accuracy = calcAccuracy(correctCount, answerCount);
+  const isCompleted = answered >= total && total > 0;
 
   return {
     accuracy,
-    progress: `${Math.min(answered, total)} / ${total}`,
-    canResume: answered < total && total > 0
+    progress: isCompleted ? `${total} / ${total}` : `${Math.min(answered, total)} / ${total}`,
+    canResume: !isCompleted && answered < total && total > 0
   };
 }
 
@@ -421,7 +424,9 @@ function resetMode(mode) {
 
 function hasPseudoResume() {
   if (!appState.pseudo || !Array.isArray(appState.pseudo.order)) return false;
-  return (appState.pseudo.answeredCount || 0) < appState.pseudo.order.length;
+  const total = appState.pseudo.order.length;
+  const answered = appState.pseudo.answeredCount || 0;
+  return answered < total;
 }
 
 function hasMasterResume() {
@@ -536,8 +541,8 @@ function renderPseudoQuestion() {
     modeLabel: "疑似試験モード",
     subInfo: `全${total}問`,
     statItems: [
-      { label: "回答数（今回）", value: String(state.answerCount) },
-      { label: "正解率（今回累積）", value: `${accuracy}%` }
+      { label: "回答数", value: String(state.answerCount) },
+      { label: "正解率", value: `${accuracy}%` }
     ],
     question: problem,
     choices: state.currentQuestionShuffledChoices,
@@ -814,15 +819,20 @@ function handleMasterNext() {
 }
 
 function finishPseudoMode() {
+  const state = appState.pseudo;
   const accuracy = calcAccuracy(
-    appState.pseudo?.correctCount || 0,
-    appState.pseudo?.answerCount || 0
+    state?.correctCount || 0,
+    state?.answerCount || 0
   );
 
   alert(`疑似試験モードが終了しました。正解率は ${accuracy}% です。`);
 
-  appState.pseudo = null;
-  localStorage.removeItem(STORAGE_KEYS.pseudo);
+  if (state) {
+    state.answeredCount = state.order.length;
+    clearPreparedQuestion(state);
+    saveModeState(MODES.PSEUDO);
+  }
+
   localStorage.removeItem(STORAGE_KEYS.lastMode);
   appState.currentMode = null;
 
