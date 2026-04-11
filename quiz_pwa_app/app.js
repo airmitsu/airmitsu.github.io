@@ -1,6 +1,6 @@
 const DEFAULT_TITLE = "問題集PWA";
-const DEFAULT_FONT_SIZE = 16;
-const FONT_SIZE_OPTIONS = [14, 16, 18, 20, 22, 24, 28];
+const DEFAULT_FONT_SIZE = 12;
+const FONT_SIZE_OPTIONS = Array.from({ length: 25 }, (_, i) => i + 8);
 
 const STORAGE_KEYS = {
   settings: "quizPwaSettings",
@@ -21,7 +21,6 @@ const appState = {
     fontSize: DEFAULT_FONT_SIZE
   },
   currentMode: null,
-  currentQuestionView: null,
   pseudo: null,
   master: null
 };
@@ -57,6 +56,7 @@ function loadSettings() {
   try {
     const raw = localStorage.getItem(STORAGE_KEYS.settings);
     if (!raw) return;
+
     const parsed = JSON.parse(raw);
     if (
       parsed &&
@@ -78,6 +78,12 @@ function applyFontSize() {
   document.documentElement.style.setProperty(
     "--question-font-size",
     `${appState.settings.fontSize}px`
+  );
+
+  const subFontSize = Math.max(6, appState.settings.fontSize - 2);
+  document.documentElement.style.setProperty(
+    "--sub-font-size",
+    `${subFontSize}px`
   );
 }
 
@@ -109,8 +115,10 @@ async function loadTitle() {
     const res = await fetch("./title.txt", { cache: "no-store" });
     if (!res.ok) {
       appState.title = DEFAULT_TITLE;
+      document.title = DEFAULT_TITLE;
       return;
     }
+
     const text = await res.text();
     const firstLine = (text.split(/\r?\n/)[0] || "").trim();
     appState.title = firstLine || DEFAULT_TITLE;
@@ -153,6 +161,7 @@ async function loadSingleProblem(relPath) {
 
     const text = await res.text();
     const rawLines = text.split(/\r?\n/);
+
     const lines = rawLines
       .map((line) => line.trim())
       .filter((line) => line !== "" && !line.startsWith("##"));
@@ -213,6 +222,7 @@ async function tryLoadText(path) {
 
 async function findExistingImage(imgBase) {
   const exts = ["jpg", "jpeg", "png"];
+
   for (const ext of exts) {
     const path = `${imgBase}.${ext}`;
     try {
@@ -225,6 +235,7 @@ async function findExistingImage(imgBase) {
       // 次へ
     }
   }
+
   return null;
 }
 
@@ -240,13 +251,13 @@ function renderHome() {
 
   homeScreen.innerHTML = `
     <div class="page-header">
-      <h1 class="app-title">${escapeHtml(appState.title)}</h1>
+      <div class="app-title">${escapeHtml(appState.title)}</div>
       <div class="page-subtitle">ホーム</div>
     </div>
 
     <div class="home-grid">
       <section class="card mode-card">
-        <h2 class="card-title">疑似試験モード</h2>
+        <div class="card-title">疑似試験モード</div>
 
         <div class="stats-grid">
           <div class="stat-box">
@@ -268,7 +279,7 @@ function renderHome() {
       </section>
 
       <section class="card mode-card">
-        <h2 class="card-title">マスターモード</h2>
+        <div class="card-title">マスターモード</div>
 
         <div class="stats-grid">
           <div class="stat-box">
@@ -291,7 +302,7 @@ function renderHome() {
     </div>
 
     <section class="card settings-card">
-      <h2 class="card-title">共通設定</h2>
+      <div class="card-title">共通設定</div>
 
       <div class="setting-row">
         <label for="font-size-select" class="setting-label">文字サイズ</label>
@@ -307,47 +318,43 @@ function renderHome() {
     </section>
   `;
 
-  document
-    .getElementById("btn-pseudo-start")
-    .addEventListener("click", () => startMode(MODES.PSEUDO, true));
+  document.getElementById("btn-pseudo-start").addEventListener("click", () => {
+    startMode(MODES.PSEUDO, true);
+  });
 
-  document
-    .getElementById("btn-master-start")
-    .addEventListener("click", () => startMode(MODES.MASTER, true));
+  document.getElementById("btn-master-start").addEventListener("click", () => {
+    startMode(MODES.MASTER, true);
+  });
 
-  document
-    .getElementById("btn-pseudo-reset")
-    .addEventListener("click", () => {
-      resetMode(MODES.PSEUDO);
+  document.getElementById("btn-pseudo-reset").addEventListener("click", () => {
+    resetMode(MODES.PSEUDO);
+    renderHome();
+    showHome();
+  });
+
+  document.getElementById("btn-master-reset").addEventListener("click", () => {
+    resetMode(MODES.MASTER);
+    renderHome();
+    showHome();
+  });
+
+  document.getElementById("font-size-select").addEventListener("change", (e) => {
+    const value = Number(e.target.value);
+    if (FONT_SIZE_OPTIONS.includes(value)) {
+      appState.settings.fontSize = value;
+      saveSettings();
+      applyFontSize();
       renderHome();
-      showHome();
-    });
-
-  document
-    .getElementById("btn-master-reset")
-    .addEventListener("click", () => {
-      resetMode(MODES.MASTER);
-      renderHome();
-      showHome();
-    });
-
-  document
-    .getElementById("font-size-select")
-    .addEventListener("change", (e) => {
-      const value = Number(e.target.value);
-      if (FONT_SIZE_OPTIONS.includes(value)) {
-        appState.settings.fontSize = value;
-        saveSettings();
-        applyFontSize();
-        if (!quizScreen.classList.contains("hidden")) {
-          renderCurrentQuestion();
-        }
+      if (!quizScreen.classList.contains("hidden")) {
+        renderCurrentQuestion();
       }
-    });
+    }
+  });
 }
 
 function getPseudoHomeStats() {
   const state = appState.pseudo;
+
   if (!state) {
     return {
       accuracy: "0.0",
@@ -369,6 +376,7 @@ function getPseudoHomeStats() {
 
 function getMasterHomeStats() {
   const state = appState.master;
+
   if (!state) {
     return {
       accuracy: "0.0",
@@ -407,7 +415,7 @@ function resetMode(mode) {
       appState.currentMode = null;
     }
   }
-  appState.currentQuestionView = null;
+
   localStorage.removeItem(STORAGE_KEYS.lastMode);
 }
 
@@ -456,9 +464,7 @@ function startMode(mode, allowResume) {
 }
 
 function initPseudoMode() {
-  const order = shuffle(
-    appState.problems.map((_, index) => index)
-  );
+  const order = shuffle(appState.problems.map((_, index) => index));
 
   appState.pseudo = {
     order,
@@ -476,9 +482,7 @@ function initPseudoMode() {
 }
 
 function initMasterMode() {
-  const pool = shuffle(
-    appState.problems.map((_, index) => index)
-  );
+  const pool = shuffle(appState.problems.map((_, index) => index));
 
   appState.master = {
     round: 1,
@@ -523,9 +527,10 @@ function renderPseudoQuestion() {
   const problemIndex = state.order[answered];
   const problem = appState.problems[problemIndex];
 
-  ensurePreparedQuestion(state, problem);
+  ensurePreparedQuestion(state, problem, MODES.PSEUDO);
 
   const accuracy = calcAccuracy(state.correctCount, state.answerCount);
+
   renderQuestionLayout({
     title: appState.title,
     modeLabel: "疑似試験モード",
@@ -576,7 +581,7 @@ function renderMasterQuestion() {
   const problemIndex = state.pool[state.cursor];
   const problem = appState.problems[problemIndex];
 
-  ensurePreparedQuestion(state, problem);
+  ensurePreparedQuestion(state, problem, MODES.MASTER);
 
   const accuracy = calcAccuracy(state.correctCount, state.answerCount);
   const remain = state.pool.length - state.cursor;
@@ -596,7 +601,7 @@ function renderMasterQuestion() {
     result: state.currentResult,
     explanation: problem.explanation,
     footerText: state.currentAnswered ? "" : "未回答",
-    nextLabel: remain === 1 && state.nextRoundPool.length === 0 ? "完了確認" : "次へ",
+    nextLabel: "次へ",
     onChoice: (index) => handleMasterAnswer(index),
     onNext: () => handleMasterNext()
   });
@@ -623,7 +628,7 @@ function renderQuestionLayout({
       <div class="quiz-header">
         <div class="quiz-header-left">
           <div class="quiz-app-title">${escapeHtml(title)}</div>
-          <h1 class="quiz-mode-title">${escapeHtml(modeLabel)}</h1>
+          <div class="quiz-mode-title">${escapeHtml(modeLabel)}</div>
           <div class="quiz-subinfo">${escapeHtml(subInfo)}</div>
         </div>
         <div class="quiz-header-right">
@@ -632,24 +637,18 @@ function renderQuestionLayout({
       </div>
 
       <div class="stats-grid quiz-stats">
-        ${statItems
-          .map(
-            (item) => `
+        ${statItems.map((item) => `
           <div class="stat-box">
             <div class="stat-label">${escapeHtml(item.label)}</div>
             <div class="stat-value">${escapeHtml(item.value)}</div>
           </div>
-        `
-          )
-          .join("")}
+        `).join("")}
       </div>
 
       <div class="question-block">
         <div class="question-text">${escapeHtml(question.questionText)}</div>
 
-        ${
-          question.imagePath
-            ? `
+        ${question.imagePath ? `
           <div class="question-image-wrap">
             <img
               src="${question.imagePath}"
@@ -658,49 +657,37 @@ function renderQuestionLayout({
               id="question-image"
             />
           </div>
-        `
-            : ""
-        }
+        ` : ""}
       </div>
 
       <div class="choices">
-        ${choices
-          .map((choice, index) => {
-            const selectedClass = selectedIndex === index ? " selected" : "";
-            const disabledAttr = answered ? "disabled" : "";
-            return `
-              <button
-                class="choice-btn${selectedClass}"
-                data-choice-index="${index}"
-                ${disabledAttr}
-              >
-                ${escapeHtml(choice)}
-              </button>
-            `;
-          })
-          .join("")}
+        ${choices.map((choice, index) => {
+          const selectedClass = selectedIndex === index ? " selected" : "";
+          const disabledAttr = answered ? "disabled" : "";
+          return `
+            <button
+              class="choice-btn${selectedClass}"
+              data-choice-index="${index}"
+              ${disabledAttr}
+            >
+              ${escapeHtml(choice)}
+            </button>
+          `;
+        }).join("")}
       </div>
 
-      ${
-        answered
-          ? `
+      ${answered ? `
         <div class="result-panel ${result === "correct" ? "correct" : "wrong"}">
           ${result === "correct" ? "正解" : "間違い"}
         </div>
-      `
-          : ""
-      }
+      ` : ""}
 
-      ${
-        answered && explanation
-          ? `
+      ${answered && explanation ? `
         <div class="explanation-block">
           <div class="explanation-title">解説</div>
           <div class="explanation-body">${escapeHtml(explanation).replace(/\n/g, "<br>")}</div>
         </div>
-      `
-          : ""
-      }
+      ` : ""}
 
       <div class="quiz-footer">
         <div class="quiz-footer-left">${escapeHtml(footerText)}</div>
@@ -731,15 +718,12 @@ function renderQuestionLayout({
   }
 }
 
-function ensurePreparedQuestion(state, problem) {
+function ensurePreparedQuestion(state, problem, mode) {
   if (Array.isArray(state.currentQuestionShuffledChoices)) {
     return;
   }
 
-  const choices = ["？ わからない", ...problem.choices];
-  const realChoices = choices.slice(1);
-  const shuffledReal = shuffle(realChoices);
-
+  const shuffledReal = shuffle([...problem.choices]);
   const shuffledChoices = ["？ わからない", ...shuffledReal];
   const correctIndex = shuffledChoices.findIndex(
     (choice) => choice === problem.correctChoiceText
@@ -751,7 +735,7 @@ function ensurePreparedQuestion(state, problem) {
   state.currentSelectedIndex = null;
   state.currentResult = null;
 
-  saveModeState(appState.currentMode);
+  saveModeState(mode);
 }
 
 function clearPreparedQuestion(state) {
@@ -841,7 +825,6 @@ function finishPseudoMode() {
   localStorage.removeItem(STORAGE_KEYS.pseudo);
   localStorage.removeItem(STORAGE_KEYS.lastMode);
   appState.currentMode = null;
-  appState.currentQuestionView = null;
 
   renderHome();
   showHome();
@@ -872,6 +855,7 @@ function finishMasterMode() {
   saveModeState(MODES.MASTER);
   localStorage.removeItem(STORAGE_KEYS.lastMode);
   appState.currentMode = null;
+
   renderHome();
   showHome();
 }
@@ -921,7 +905,7 @@ function enableImageZoomPan(img) {
     (e) => {
       e.preventDefault();
       const delta = e.deltaY < 0 ? 0.15 : -0.15;
-      scale = Math.min(4, Math.max(1, scale + delta));
+      scale = Math.min(6, Math.max(1, scale + delta));
       if (scale === 1) {
         translateX = 0;
         translateY = 0;
