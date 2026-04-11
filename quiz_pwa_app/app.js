@@ -1,4 +1,4 @@
-const DEFAULT_TITLE = "問題集PWA";
+const DEFAULT_TITLE = "問題集";
 const DEFAULT_FONT_SIZE = 12;
 const FONT_SIZE_OPTIONS = Array.from({ length: 25 }, (_, i) => i + 8);
 
@@ -13,6 +13,10 @@ const MODES = {
   PSEUDO: "pseudo",
   MASTER: "master"
 };
+
+const PROBLEMS_DIR = "./problems";
+const MAX_PROBLEM_SCAN = 9999;
+const MAX_CONSECUTIVE_MISS = 20;
 
 const appState = {
   title: DEFAULT_TITLE,
@@ -35,7 +39,7 @@ async function init() {
   loadModeStates();
   applyFontSize();
 
-  await loadTitle();
+  await loadManifestTitle();
   await loadProblems();
 
   renderHome();
@@ -50,6 +54,27 @@ async function init() {
   }
 
   registerServiceWorker();
+}
+
+async function loadManifestTitle() {
+  try {
+    const res = await fetch("./manifest.webmanifest", { cache: "no-store" });
+    if (!res.ok) {
+      appState.title = DEFAULT_TITLE;
+      document.title = DEFAULT_TITLE;
+      return;
+    }
+
+    const data = await res.json();
+    appState.title = (data && typeof data.name === "string" && data.name.trim())
+      ? data.name.trim()
+      : DEFAULT_TITLE;
+
+    document.title = appState.title;
+  } catch (e) {
+    appState.title = DEFAULT_TITLE;
+    document.title = DEFAULT_TITLE;
+  }
 }
 
 function loadSettings() {
@@ -110,53 +135,32 @@ function loadJson(key, fallback) {
   }
 }
 
-async function loadTitle() {
-  try {
-    const res = await fetch("./title.txt", { cache: "no-store" });
-    if (!res.ok) {
-      appState.title = DEFAULT_TITLE;
-      document.title = DEFAULT_TITLE;
-      return;
-    }
-
-    const text = await res.text();
-    const firstLine = (text.split(/\r?\n/)[0] || "").trim();
-    appState.title = firstLine || DEFAULT_TITLE;
-    document.title = appState.title;
-  } catch (e) {
-    appState.title = DEFAULT_TITLE;
-    document.title = DEFAULT_TITLE;
-  }
-}
-
 async function loadProblems() {
-  try {
-    const res = await fetch("./problems-index.json", { cache: "no-store" });
-    if (!res.ok) {
-      appState.problems = [];
-      return;
-    }
+  const loaded = [];
+  let consecutiveMisses = 0;
 
-    const data = await res.json();
-    const paths = Array.isArray(data.problems) ? data.problems : [];
-    const loaded = [];
+  for (let i = 1; i <= MAX_PROBLEM_SCAN; i += 1) {
+    const problem = await loadSingleProblem(i);
 
-    for (const relPath of paths) {
-      const problem = await loadSingleProblem(relPath);
-      if (problem) {
-        loaded.push(problem);
+    if (problem) {
+      loaded.push(problem);
+      consecutiveMisses = 0;
+    } else {
+      consecutiveMisses += 1;
+      if (consecutiveMisses >= MAX_CONSECUTIVE_MISS) {
+        break;
       }
     }
-
-    appState.problems = loaded;
-  } catch (e) {
-    appState.problems = [];
   }
+
+  appState.problems = loaded;
 }
 
-async function loadSingleProblem(relPath) {
+async function loadSingleProblem(indexNumber) {
+  const toiPath = `${PROBLEMS_DIR}/toi${indexNumber}.txt`;
+
   try {
-    const res = await fetch(`./${relPath}`, { cache: "no-store" });
+    const res = await fetch(toiPath, { cache: "no-store" });
     if (!res.ok) return null;
 
     const text = await res.text();
@@ -180,25 +184,11 @@ async function loadSingleProblem(relPath) {
 
     const correctChoiceText = choices[answerNumber - 1];
 
-    const basePath = relPath.replace(/[^/]+$/, "");
-    const fileName = relPath.split("/").pop() || "";
-    const match = fileName.match(/^toi(\d+)\.txt$/i);
-    const indexNumber = match ? match[1] : null;
-
-    let explanation = "";
-    if (indexNumber) {
-      const kaiPath = `${basePath}kai${indexNumber}.txt`;
-      explanation = await tryLoadText(kaiPath);
-    }
-
-    let imagePath = null;
-    if (indexNumber) {
-      const imgBase = `${basePath}toi${indexNumber}`;
-      imagePath = await findExistingImage(imgBase);
-    }
+    const explanation = await tryLoadText(`${PROBLEMS_DIR}/kai${indexNumber}.txt`);
+    const imagePath = await findExistingImage(`${PROBLEMS_DIR}/toi${indexNumber}`);
 
     return {
-      sourcePath: relPath,
+      sourcePath: toiPath,
       questionText,
       choices,
       correctChoiceText,
@@ -212,7 +202,7 @@ async function loadSingleProblem(relPath) {
 
 async function tryLoadText(path) {
   try {
-    const res = await fetch(`./${path}`, { cache: "no-store" });
+    const res = await fetch(path, { cache: "no-store" });
     if (!res.ok) return "";
     return (await res.text()).trim();
   } catch (e) {
@@ -226,11 +216,11 @@ async function findExistingImage(imgBase) {
   for (const ext of exts) {
     const path = `${imgBase}.${ext}`;
     try {
-      const res = await fetch(`./${path}`, {
+      const res = await fetch(path, {
         method: "HEAD",
         cache: "no-store"
       });
-      if (res.ok) return `./${path}`;
+      if (res.ok) return path;
     } catch (e) {
       // 次へ
     }
@@ -447,7 +437,7 @@ function showQuiz() {
 
 function startMode(mode, allowResume) {
   if (!appState.problems.length) {
-    alert("問題が見つかりません。problems-index.json と問題ファイルを確認してください。");
+    alert("問題が見つかりません。problems フォルダ内の toi#.txt を確認してください。");
     return;
   }
 
