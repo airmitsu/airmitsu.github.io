@@ -596,6 +596,7 @@ function renderPseudoQuestion() {
     answered: state.currentAnswered,
     selectedIndex: state.currentSelectedIndex,
     result: state.currentResult,
+    correctAnswerIndex: state.currentCorrectIndex,
     explanation: problem.explanation,
     explanationImagePath: problem.explanationImagePath,
     footerText: answered === total - 1 ? "最終問題" : "未回答",
@@ -652,6 +653,7 @@ function renderMasterQuestion() {
     answered: state.currentAnswered,
     selectedIndex: state.currentSelectedIndex,
     result: state.currentResult,
+    correctAnswerIndex: state.currentCorrectIndex,
     explanation: problem.explanation,
     explanationImagePath: problem.explanationImagePath,
     footerText: state.currentAnswered ? "" : "未回答",
@@ -671,6 +673,7 @@ function renderQuestionLayout({
   answered,
   selectedIndex,
   result,
+  correctAnswerIndex,
   explanation,
   explanationImagePath,
   footerText,
@@ -717,13 +720,14 @@ function renderQuestionLayout({
         ${choices.map((choice, index) => {
           const selectedClass = selectedIndex === index ? " selected" : "";
           const disabledAttr = answered ? "disabled" : "";
+          const choiceLabel = `${index}. ${choice}`;
           return `
             <button
               class="choice-btn${selectedClass}"
               data-choice-index="${index}"
               ${disabledAttr}
             >
-              ${escapeHtml(choice)}
+              ${escapeHtml(choiceLabel)}
             </button>
           `;
         }).join("")}
@@ -731,10 +735,13 @@ function renderQuestionLayout({
 
       ${answered ? `
         <div class="result-panel ${result === "correct" ? "correct" : "wrong"}">
-          <div>${result === "correct" ? "正解" : "間違い"}</div>
-          ${result === "wrong" ? `
-            <div style="margin-top:6px;">正解：${escapeHtml(question.correctChoiceText)}</div>
-          ` : ""}
+          ${result === "correct" ? "正解" : "間違い"}
+        </div>
+      ` : ""}
+
+      ${answered && result === "wrong" ? `
+        <div class="result-panel correct-answer-panel">
+          正解：${escapeHtml(String(correctAnswerIndex ?? ""))}
         </div>
       ` : ""}
 
@@ -1074,26 +1081,22 @@ document.addEventListener("keydown", (e) => {
   if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
   if (active && active.isContentEditable) return;
 
-  // 問題画面でのみ有効
   if (quizScreen.classList.contains("hidden")) return;
 
   const key = e.key;
 
-  // 0～9 / テンキー数字
   if (/^[0-9]$/.test(key)) {
     const buttons = document.querySelectorAll("[data-choice-index]");
     if (!buttons.length) return;
 
     const num = Number(key);
 
-    // 0 → 「？ わからない」
     if (num === 0) {
       e.preventDefault();
       buttons[0]?.click();
       return;
     }
 
-    // 1 → index1, 2 → index2 ...
     if (num < buttons.length) {
       e.preventDefault();
       buttons[num]?.click();
@@ -1101,7 +1104,6 @@ document.addEventListener("keydown", (e) => {
     }
   }
 
-  // Enter → 次へ
   if (key === "Enter") {
     const nextBtn = document.getElementById("btn-next");
     if (nextBtn && !nextBtn.disabled) {
