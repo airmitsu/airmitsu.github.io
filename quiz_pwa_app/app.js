@@ -66,9 +66,10 @@ async function loadManifestTitle() {
     }
 
     const data = await res.json();
-    appState.title = (data && typeof data.name === "string" && data.name.trim())
-      ? data.name.trim()
-      : DEFAULT_TITLE;
+    appState.title =
+      data && typeof data.name === "string" && data.name.trim()
+        ? data.name.trim()
+        : DEFAULT_TITLE;
 
     document.title = appState.title;
   } catch (e) {
@@ -158,34 +159,68 @@ async function loadProblems() {
 
 async function loadSingleProblem(indexNumber) {
   const toiPath = `${PROBLEMS_DIR}/toi${indexNumber}.txt`;
+  const senPath = `${PROBLEMS_DIR}/sen${indexNumber}.txt`;
+  const kaiPath = `${PROBLEMS_DIR}/kai${indexNumber}.txt`;
 
   try {
-    const res = await fetch(toiPath, { cache: "no-store" });
-    if (!res.ok) return null;
+    const [toiRes, senRes, kaiRes] = await Promise.all([
+      fetch(toiPath, { cache: "no-store" }),
+      fetch(senPath, { cache: "no-store" }),
+      fetch(kaiPath, { cache: "no-store" })
+    ]);
 
-    const text = await res.text();
-    const rawLines = text.split(/\r?\n/);
+    if (!toiRes.ok || !senRes.ok || !kaiRes.ok) {
+      return null;
+    }
 
-    const lines = rawLines
+    const [toiText, senText, kaiText] = await Promise.all([
+      toiRes.text(),
+      senRes.text(),
+      kaiRes.text()
+    ]);
+
+    const questionText = normalizeMultilineText(toiText);
+    if (!questionText) return null;
+
+    const choices = senText
+      .split(/\r?\n/)
       .map((line) => line.trim())
       .filter((line) => line !== "" && !line.startsWith("##"));
 
-    if (lines.length < 4) return null;
+    if (choices.length < 2) return null;
 
-    const questionText = lines[0].trim();
-    const answerRaw = normalizeDigits(lines[1]).trim();
-    const choices = lines.slice(2).map((v) => v.trim()).filter(Boolean);
+    const kaiLines = kaiText
+      .split(/\r?\n/)
+      .map((line) => line.replace(/\r/g, ""));
 
-    if (!questionText || choices.length < 2) return null;
+    const nonCommentKaiLines = [];
+    for (const line of kaiLines) {
+      const trimmed = line.trim();
+      if (trimmed.startsWith("##")) continue;
+      nonCommentKaiLines.push(line);
+    }
 
+    if (nonCommentKaiLines.length < 1) return null;
+
+    const answerRaw = normalizeDigits(nonCommentKaiLines[0].trim());
     const answerNumber = Number(answerRaw);
+
     if (!Number.isInteger(answerNumber)) return null;
     if (answerNumber < 1 || answerNumber > choices.length) return null;
 
+    const explanation = nonCommentKaiLines
+      .slice(1)
+      .join("\n")
+      .trim();
+
     const correctChoiceText = choices[answerNumber - 1];
 
-    const explanation = await tryLoadText(`${PROBLEMS_DIR}/kai${indexNumber}.txt`);
-    const imagePath = await findExistingImage(`${PROBLEMS_DIR}/toi${indexNumber}`);
+    const questionImagePath = await findExistingImage(
+      `${PROBLEMS_DIR}/toi${indexNumber}`
+    );
+    const explanationImagePath = await findExistingImage(
+      `${PROBLEMS_DIR}/kai${indexNumber}`
+    );
 
     return {
       sourcePath: toiPath,
@@ -193,21 +228,20 @@ async function loadSingleProblem(indexNumber) {
       choices,
       correctChoiceText,
       explanation,
-      imagePath
+      imagePath: questionImagePath,
+      explanationImagePath
     };
   } catch (e) {
     return null;
   }
 }
 
-async function tryLoadText(path) {
-  try {
-    const res = await fetch(path, { cache: "no-store" });
-    if (!res.ok) return "";
-    return (await res.text()).trim();
-  } catch (e) {
-    return "";
-  }
+function normalizeMultilineText(text) {
+  return text
+    .split(/\r?\n/)
+    .filter((line) => !line.trim().startsWith("##"))
+    .join("\n")
+    .trim();
 }
 
 async function findExistingImage(imgBase) {
@@ -362,7 +396,9 @@ function getPseudoHomeStats() {
 
   return {
     accuracy,
-    progress: isCompleted ? `${total} / ${total}` : `${Math.min(answered, total)} / ${total}`,
+    progress: isCompleted
+      ? `${total} / ${total}`
+      : `${Math.min(answered, total)} / ${total}`,
     canResume: !isCompleted && answered < total && total > 0
   };
 }
@@ -437,7 +473,7 @@ function showQuiz() {
 
 function startMode(mode, allowResume) {
   if (!appState.problems.length) {
-    alert("問題が見つかりません。problems フォルダ内の toi#.txt を確認してください。");
+    alert("問題が見つかりません。problems フォルダ内の toi#.txt / sen#.txt / kai#.txt を確認してください。");
     return;
   }
 
@@ -540,6 +576,7 @@ function renderPseudoQuestion() {
     selectedIndex: state.currentSelectedIndex,
     result: state.currentResult,
     explanation: problem.explanation,
+    explanationImagePath: problem.explanationImagePath,
     footerText: answered === total - 1 ? "最終問題" : "未回答",
     nextLabel: answered === total - 1 ? "終了" : "次へ",
     onChoice: (index) => handlePseudoAnswer(index),
@@ -595,6 +632,7 @@ function renderMasterQuestion() {
     selectedIndex: state.currentSelectedIndex,
     result: state.currentResult,
     explanation: problem.explanation,
+    explanationImagePath: problem.explanationImagePath,
     footerText: state.currentAnswered ? "" : "未回答",
     nextLabel: "次へ",
     onChoice: (index) => handleMasterAnswer(index),
@@ -613,6 +651,7 @@ function renderQuestionLayout({
   selectedIndex,
   result,
   explanation,
+  explanationImagePath,
   footerText,
   nextLabel,
   onChoice,
@@ -632,18 +671,24 @@ function renderQuestionLayout({
       </div>
 
       <div class="stats-grid quiz-stats">
-        ${statItems.map((item) => `
+        ${statItems
+          .map(
+            (item) => `
           <div class="stat-box">
             <div class="stat-label">${escapeHtml(item.label)}</div>
             <div class="stat-value">${escapeHtml(item.value)}</div>
           </div>
-        `).join("")}
+        `
+          )
+          .join("")}
       </div>
 
       <div class="question-block">
-        <div class="question-text">${escapeHtml(question.questionText)}</div>
+        <div class="question-text">${escapeHtml(question.questionText).replace(/\n/g, "<br>")}</div>
 
-        ${question.imagePath ? `
+        ${
+          question.imagePath
+            ? `
           <div class="question-image-wrap">
             <img
               src="${question.imagePath}"
@@ -652,37 +697,70 @@ function renderQuestionLayout({
               id="question-image"
             />
           </div>
-        ` : ""}
+        `
+            : ""
+        }
       </div>
 
       <div class="choices">
-        ${choices.map((choice, index) => {
-          const selectedClass = selectedIndex === index ? " selected" : "";
-          const disabledAttr = answered ? "disabled" : "";
-          return `
-            <button
-              class="choice-btn${selectedClass}"
-              data-choice-index="${index}"
-              ${disabledAttr}
-            >
-              ${escapeHtml(choice)}
-            </button>
-          `;
-        }).join("")}
+        ${choices
+          .map((choice, index) => {
+            const selectedClass = selectedIndex === index ? " selected" : "";
+            const disabledAttr = answered ? "disabled" : "";
+            return `
+              <button
+                class="choice-btn${selectedClass}"
+                data-choice-index="${index}"
+                ${disabledAttr}
+              >
+                ${escapeHtml(choice)}
+              </button>
+            `;
+          })
+          .join("")}
       </div>
 
-      ${answered ? `
+      ${
+        answered
+          ? `
         <div class="result-panel ${result === "correct" ? "correct" : "wrong"}">
           ${result === "correct" ? "正解" : "間違い"}
         </div>
-      ` : ""}
+      `
+          : ""
+      }
 
-      ${answered && explanation ? `
+      ${
+        answered && (explanation || explanationImagePath)
+          ? `
         <div class="explanation-block">
-          <div class="explanation-title">解説</div>
-          <div class="explanation-body">${escapeHtml(explanation).replace(/\n/g, "<br>")}</div>
+          ${
+            explanation
+              ? `
+            <div class="explanation-title">解説</div>
+            <div class="explanation-body">${escapeHtml(explanation).replace(/\n/g, "<br>")}</div>
+          `
+              : ""
+          }
+
+          ${
+            explanationImagePath
+              ? `
+            <div class="question-image-wrap explanation-image-wrap">
+              <img
+                src="${explanationImagePath}"
+                alt="解説画像"
+                class="question-image"
+                id="explanation-image"
+              />
+            </div>
+          `
+              : ""
+          }
         </div>
-      ` : ""}
+      `
+          : ""
+      }
 
       <div class="quiz-footer">
         <div class="quiz-footer-left">${escapeHtml(footerText)}</div>
@@ -707,9 +785,14 @@ function renderQuestionLayout({
 
   document.getElementById("btn-next").addEventListener("click", onNext);
 
-  const img = document.getElementById("question-image");
-  if (img) {
-    enableImageZoomPan(img);
+  const questionImg = document.getElementById("question-image");
+  if (questionImg) {
+    enableImageZoomPan(questionImg);
+  }
+
+  const explanationImg = document.getElementById("explanation-image");
+  if (explanationImg) {
+    enableImageZoomPan(explanationImg);
   }
 }
 
@@ -810,10 +893,7 @@ function handleMasterNext() {
 
 function finishPseudoMode() {
   const state = appState.pseudo;
-  const accuracy = calcAccuracy(
-    state?.correctCount || 0,
-    state?.answerCount || 0
-  );
+  const accuracy = calcAccuracy(state?.correctCount || 0, state?.answerCount || 0);
 
   alert(`疑似試験モードが終了しました。正解率は ${accuracy}% です。`);
 
