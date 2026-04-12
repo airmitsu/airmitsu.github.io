@@ -1,4 +1,4 @@
-const CACHE_NAME = "quiz-pwa-v4";
+const CACHE_NAME = "quiz-pwa-v5";
 
 const urlsToCache = [
   "./",
@@ -22,7 +22,7 @@ self.addEventListener("activate", (event) => {
     caches.keys().then((keys) =>
       Promise.all(
         keys.map((key) => {
-          if (key !== CACHE_NAME && !key.startsWith("quiz-pwa-v4")) {
+          if (key !== CACHE_NAME) {
             return caches.delete(key);
           }
           return Promise.resolve();

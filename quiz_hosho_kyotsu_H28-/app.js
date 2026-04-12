@@ -19,7 +19,8 @@ const MAX_PROBLEM_SCAN = 9999;
 const MAX_CONSECUTIVE_MISS = 20;
 const LOAD_BATCH_SIZE = 25;
 const IMAGE_EXT = "png";
-const IMAGE_CACHE_NAME = "quiz-pwa-v3";
+const APP_CACHE_NAME = "quiz-pwa-v5";
+const IMAGE_CACHE_NAME = APP_CACHE_NAME;
 
 const appState = {
   title: DEFAULT_TITLE,
@@ -50,10 +51,14 @@ async function init() {
 
   renderLoadingScreen("起動中", "設定を読み込んでいます。");
 
+  await registerServiceWorker();
   await loadManifestTitle();
 
   renderLoadingScreen("問題読込中", "問題を読み込んでいます。");
   await loadProblems();
+
+  renderLoadingScreen("オフライン準備中", "問題データを保存しています。");
+  await precacheProblemTextFiles();
 
   renderHome();
 
@@ -66,7 +71,6 @@ async function init() {
     showHome();
   }
 
-  registerServiceWorker();
   startImagePrecache();
 }
 
@@ -814,6 +818,47 @@ function attachSinglePngImage(imgEl, wrapEl, src) {
   imgEl.src = src;
 }
 
+
+async function precacheProblemTextFiles() {
+  if (!("caches" in window)) return;
+
+  try {
+    const cache = await caches.open(APP_CACHE_NAME);
+    const total = appState.problems.length;
+
+    for (let i = 0; i < total; i += 1) {
+      const problem = appState.problems[i];
+      const targets = [
+        `${PROBLEMS_DIR}/toi${problem.indexNumber}.txt`,
+        `${PROBLEMS_DIR}/sen${problem.indexNumber}.txt`,
+        `${PROBLEMS_DIR}/kai${problem.indexNumber}.txt`
+      ];
+
+      for (const url of targets) {
+        const exists = await cache.match(url);
+        if (exists) continue;
+
+        try {
+          const res = await fetch(url, { cache: "no-store" });
+          if (res.ok) {
+            await cache.put(url, res.clone());
+          }
+        } catch (e) {
+          // 無視
+        }
+      }
+
+      renderLoadingScreen(
+        "オフライン準備中",
+        "問題データを保存しています。",
+        `${i + 1} / ${total} 問`
+      );
+    }
+  } catch (e) {
+    // 無視
+  }
+}
+
 async function startImagePrecache() {
   if (appState.imagePrecacheStarted) return;
   appState.imagePrecacheStarted = true;
@@ -1010,13 +1055,13 @@ function escapeHtml(str) {
     .replaceAll("'", "&#39;");
 }
 
-function registerServiceWorker() {
-  if ("serviceWorker" in navigator) {
-    window.addEventListener("load", () => {
-      navigator.serviceWorker.register("./sw.js").catch(() => {
-        // 無視
-      });
-    });
+async function registerServiceWorker() {
+  if (!("serviceWorker" in navigator)) return;
+
+  try {
+    await navigator.serviceWorker.register("./sw.js");
+  } catch (e) {
+    // 無視
   }
 }
 
