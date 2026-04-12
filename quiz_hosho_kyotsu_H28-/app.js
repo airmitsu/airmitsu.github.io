@@ -731,7 +731,10 @@ function renderQuestionLayout({
 
       ${answered ? `
         <div class="result-panel ${result === "correct" ? "correct" : "wrong"}">
-          ${result === "correct" ? "正解" : "間違い"}
+          <div>${result === "correct" ? "正解" : "間違い"}</div>
+          ${result === "wrong" ? `
+            <div style="margin-top:6px;">正解：${escapeHtml(question.correctChoiceText)}</div>
+          ` : ""}
         </div>
       ` : ""}
 
