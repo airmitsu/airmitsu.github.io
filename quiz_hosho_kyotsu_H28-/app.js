@@ -596,7 +596,6 @@ function renderPseudoQuestion() {
     answered: state.currentAnswered,
     selectedIndex: state.currentSelectedIndex,
     result: state.currentResult,
-    correctAnswerIndex: state.currentCorrectIndex,
     explanation: problem.explanation,
     explanationImagePath: problem.explanationImagePath,
     footerText: answered === total - 1 ? "最終問題" : "未回答",
@@ -653,7 +652,6 @@ function renderMasterQuestion() {
     answered: state.currentAnswered,
     selectedIndex: state.currentSelectedIndex,
     result: state.currentResult,
-    correctAnswerIndex: state.currentCorrectIndex,
     explanation: problem.explanation,
     explanationImagePath: problem.explanationImagePath,
     footerText: state.currentAnswered ? "" : "未回答",
@@ -673,7 +671,6 @@ function renderQuestionLayout({
   answered,
   selectedIndex,
   result,
-  correctAnswerIndex,
   explanation,
   explanationImagePath,
   footerText,
@@ -704,12 +701,7 @@ function renderQuestionLayout({
       </div>
 
       <div class="question-block">
-        <div class="question-text">
-          ${escapeHtml(question.questionText).replace(/\n/g, "<br>")}
-          <div style="margin-top:6px; font-size:0.8em; color:#5c6b84;">
-            （問題番号：${question.indexNumber}）
-          </div>
-        </div>
+        <div class="question-text">${escapeHtml(question.questionText).replace(/\n/g, "<br>")}</div>
 
         <div class="question-image-wrap" id="question-image-wrap" style="display:none;">
           <img alt="問題画像" class="question-image" id="question-image" />
@@ -720,14 +712,13 @@ function renderQuestionLayout({
         ${choices.map((choice, index) => {
           const selectedClass = selectedIndex === index ? " selected" : "";
           const disabledAttr = answered ? "disabled" : "";
-          const choiceLabel = `${index}. ${choice}`;
           return `
             <button
               class="choice-btn${selectedClass}"
               data-choice-index="${index}"
               ${disabledAttr}
             >
-              ${escapeHtml(choiceLabel)}
+              ${escapeHtml(choice)}
             </button>
           `;
         }).join("")}
@@ -736,12 +727,6 @@ function renderQuestionLayout({
       ${answered ? `
         <div class="result-panel ${result === "correct" ? "correct" : "wrong"}">
           ${result === "correct" ? "正解" : "間違い"}
-        </div>
-      ` : ""}
-
-      ${answered && result === "wrong" ? `
-        <div class="result-panel correct-answer-panel">
-          正解：${escapeHtml(String(correctAnswerIndex ?? ""))}
         </div>
       ` : ""}
 
@@ -1075,40 +1060,3 @@ function enableImageZoomPan(img) {
     applyTransform();
   });
 }
-document.addEventListener("keydown", (e) => {
-  const active = document.activeElement;
-  const tag = active && active.tagName ? active.tagName.toUpperCase() : "";
-  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
-  if (active && active.isContentEditable) return;
-
-  if (quizScreen.classList.contains("hidden")) return;
-
-  const key = e.key;
-
-  if (/^[0-9]$/.test(key)) {
-    const buttons = document.querySelectorAll("[data-choice-index]");
-    if (!buttons.length) return;
-
-    const num = Number(key);
-
-    if (num === 0) {
-      e.preventDefault();
-      buttons[0]?.click();
-      return;
-    }
-
-    if (num < buttons.length) {
-      e.preventDefault();
-      buttons[num]?.click();
-      return;
-    }
-  }
-
-  if (key === "Enter") {
-    const nextBtn = document.getElementById("btn-next");
-    if (nextBtn && !nextBtn.disabled) {
-      e.preventDefault();
-      nextBtn.click();
-    }
-  }
-});
