@@ -1,4 +1,4 @@
-const CACHE_NAME = "quiz-pwa-v2";
+const CACHE_NAME = "quiz-pwa-v4";
 
 const urlsToCache = [
   "./",
@@ -6,8 +6,8 @@ const urlsToCache = [
   "./style.css",
   "./app.js",
   "./manifest.webmanifest",
-  "./title.txt",
-  "./problems-index.json"
+  "./icon-192.png",
+  "./icon-512.png"
 ];
 
 self.addEventListener("install", (event) => {
@@ -22,7 +22,7 @@ self.addEventListener("activate", (event) => {
     caches.keys().then((keys) =>
       Promise.all(
         keys.map((key) => {
-          if (key !== CACHE_NAME) {
+          if (key !== CACHE_NAME && !key.startsWith("quiz-pwa-v4")) {
             return caches.delete(key);
           }
           return Promise.resolve();
