@@ -17,6 +17,9 @@ const MODES = {
 const PROBLEMS_DIR = "./problems";
 const MAX_PROBLEM_SCAN = 9999;
 const MAX_CONSECUTIVE_MISS = 20;
+const LOAD_BATCH_SIZE = 25;
+const IMAGE_EXT = "png";
+const IMAGE_CACHE_NAME = "quiz-pwa-v3";
 
 const appState = {
   title: DEFAULT_TITLE,
@@ -26,7 +29,13 @@ const appState = {
   },
   currentMode: null,
   pseudo: null,
-  master: null
+  master: null,
+  imagePrecacheStarted: false,
+  loadStatus: {
+    loaded: 0,
+    totalTried: 0,
+    phase: "init"
+  }
 };
 
 const homeScreen = document.getElementById("screen-home");
@@ -39,7 +48,11 @@ async function init() {
   loadModeStates();
   applyFontSize();
 
+  renderLoadingScreen("起動中", "設定を読み込んでいます。");
+
   await loadManifestTitle();
+
+  renderLoadingScreen("問題読込中", "問題を読み込んでいます。");
   await loadProblems();
 
   renderHome();
@@ -54,6 +67,18 @@ async function init() {
   }
 
   registerServiceWorker();
+  startImagePrecache();
+}
+
+function renderLoadingScreen(title, message, progressText = "") {
+  homeScreen.innerHTML = `
+    <div class="card">
+      <div class="card-title">${escapeHtml(title)}</div>
+      <div>${escapeHtml(message)}</div>
+      ${progressText ? `<div style="margin-top:8px;color:#5c6b84;">${escapeHtml(progressText)}</div>` : ""}
+    </div>
+  `;
+  showHome();
 }
 
 async function loadManifestTitle() {
@@ -139,19 +164,46 @@ function loadJson(key, fallback) {
 async function loadProblems() {
   const loaded = [];
   let consecutiveMisses = 0;
+  let startIndex = 1;
 
-  for (let i = 1; i <= MAX_PROBLEM_SCAN; i += 1) {
-    const problem = await loadSingleProblem(i);
+  while (startIndex <= MAX_PROBLEM_SCAN) {
+    const batchIndexes = [];
+    for (let i = 0; i < LOAD_BATCH_SIZE && startIndex + i <= MAX_PROBLEM_SCAN; i += 1) {
+      batchIndexes.push(startIndex + i);
+    }
 
-    if (problem) {
-      loaded.push(problem);
-      consecutiveMisses = 0;
-    } else {
-      consecutiveMisses += 1;
-      if (consecutiveMisses >= MAX_CONSECUTIVE_MISS) {
-        break;
+    appState.loadStatus.phase = "loading";
+    appState.loadStatus.totalTried += batchIndexes.length;
+
+    const batchResults = await Promise.all(
+      batchIndexes.map((indexNumber) => loadSingleProblem(indexNumber))
+    );
+
+    let batchHadHit = false;
+
+    for (const result of batchResults) {
+      if (result) {
+        loaded.push(result);
+        consecutiveMisses = 0;
+        batchHadHit = true;
+      } else {
+        consecutiveMisses += 1;
       }
     }
+
+    appState.loadStatus.loaded = loaded.length;
+
+    renderLoadingScreen(
+      "問題読込中",
+      `${appState.title} を読み込んでいます。`,
+      `${loaded.length}問 読込済み`
+    );
+
+    if (!batchHadHit && consecutiveMisses >= MAX_CONSECUTIVE_MISS) {
+      break;
+    }
+
+    startIndex += LOAD_BATCH_SIZE;
   }
 
   appState.problems = loaded;
@@ -195,8 +247,7 @@ async function loadSingleProblem(indexNumber) {
 
     const nonCommentKaiLines = [];
     for (const line of kaiLines) {
-      const trimmed = line.trim();
-      if (trimmed.startsWith("##")) continue;
+      if (line.trim().startsWith("##")) continue;
       nonCommentKaiLines.push(line);
     }
 
@@ -208,28 +259,18 @@ async function loadSingleProblem(indexNumber) {
     if (!Number.isInteger(answerNumber)) return null;
     if (answerNumber < 1 || answerNumber > choices.length) return null;
 
-    const explanation = nonCommentKaiLines
-      .slice(1)
-      .join("\n")
-      .trim();
-
+    const explanation = nonCommentKaiLines.slice(1).join("\n").trim();
     const correctChoiceText = choices[answerNumber - 1];
 
-    const questionImagePath = await findExistingImage(
-      `${PROBLEMS_DIR}/toi${indexNumber}`
-    );
-    const explanationImagePath = await findExistingImage(
-      `${PROBLEMS_DIR}/kai${indexNumber}`
-    );
-
     return {
+      indexNumber,
       sourcePath: toiPath,
       questionText,
       choices,
       correctChoiceText,
       explanation,
-      imagePath: questionImagePath,
-      explanationImagePath
+      questionImagePath: `${PROBLEMS_DIR}/toi${indexNumber}.${IMAGE_EXT}`,
+      explanationImagePath: `${PROBLEMS_DIR}/kai${indexNumber}.${IMAGE_EXT}`
     };
   } catch (e) {
     return null;
@@ -242,25 +283,6 @@ function normalizeMultilineText(text) {
     .filter((line) => !line.trim().startsWith("##"))
     .join("\n")
     .trim();
-}
-
-async function findExistingImage(imgBase) {
-  const exts = ["jpg", "jpeg", "png"];
-
-  for (const ext of exts) {
-    const path = `${imgBase}.${ext}`;
-    try {
-      const res = await fetch(path, {
-        method: "HEAD",
-        cache: "no-store"
-      });
-      if (res.ok) return path;
-    } catch (e) {
-      // 次へ
-    }
-  }
-
-  return null;
 }
 
 function normalizeDigits(str) {
@@ -463,7 +485,6 @@ function hasMasterResume() {
 function showHome() {
   quizScreen.classList.add("hidden");
   homeScreen.classList.remove("hidden");
-  renderHome();
 }
 
 function showQuiz() {
@@ -671,96 +692,56 @@ function renderQuestionLayout({
       </div>
 
       <div class="stats-grid quiz-stats">
-        ${statItems
-          .map(
-            (item) => `
+        ${statItems.map((item) => `
           <div class="stat-box">
             <div class="stat-label">${escapeHtml(item.label)}</div>
             <div class="stat-value">${escapeHtml(item.value)}</div>
           </div>
-        `
-          )
-          .join("")}
+        `).join("")}
       </div>
 
       <div class="question-block">
         <div class="question-text">${escapeHtml(question.questionText).replace(/\n/g, "<br>")}</div>
 
-        ${
-          question.imagePath
-            ? `
-          <div class="question-image-wrap">
-            <img
-              src="${question.imagePath}"
-              alt="問題画像"
-              class="question-image"
-              id="question-image"
-            />
-          </div>
-        `
-            : ""
-        }
+        <div class="question-image-wrap" id="question-image-wrap" style="display:none;">
+          <img alt="問題画像" class="question-image" id="question-image" />
+        </div>
       </div>
 
       <div class="choices">
-        ${choices
-          .map((choice, index) => {
-            const selectedClass = selectedIndex === index ? " selected" : "";
-            const disabledAttr = answered ? "disabled" : "";
-            return `
-              <button
-                class="choice-btn${selectedClass}"
-                data-choice-index="${index}"
-                ${disabledAttr}
-              >
-                ${escapeHtml(choice)}
-              </button>
-            `;
-          })
-          .join("")}
+        ${choices.map((choice, index) => {
+          const selectedClass = selectedIndex === index ? " selected" : "";
+          const disabledAttr = answered ? "disabled" : "";
+          return `
+            <button
+              class="choice-btn${selectedClass}"
+              data-choice-index="${index}"
+              ${disabledAttr}
+            >
+              ${escapeHtml(choice)}
+            </button>
+          `;
+        }).join("")}
       </div>
 
-      ${
-        answered
-          ? `
+      ${answered ? `
         <div class="result-panel ${result === "correct" ? "correct" : "wrong"}">
           ${result === "correct" ? "正解" : "間違い"}
         </div>
-      `
-          : ""
-      }
+      ` : ""}
 
-      ${
-        answered && (explanation || explanationImagePath)
-          ? `
+      ${answered && (explanation || explanationImagePath) ? `
         <div class="explanation-block">
-          ${
-            explanation
-              ? `
+          ${explanation ? `
             <div class="explanation-title">解説</div>
             <div class="explanation-body">${escapeHtml(explanation).replace(/\n/g, "<br>")}</div>
-          `
-              : ""
-          }
+          ` : ""}
 
-          ${
-            explanationImagePath
-              ? `
-            <div class="question-image-wrap explanation-image-wrap">
-              <img
-                src="${explanationImagePath}"
-                alt="解説画像"
-                class="question-image"
-                id="explanation-image"
-              />
-            </div>
-          `
-              : ""
-          }
+          <div class="question-image-wrap explanation-image-wrap" id="explanation-image-wrap" style="display:none;">
+            <img alt="解説画像" class="question-image" id="explanation-image" />
+          </div>
         </div>
-      `
-          : ""
-      }
+      ` : ""}
 
       <div class="quiz-footer">
         <div class="quiz-footer-left">${escapeHtml(footerText)}</div>
@@ -785,14 +766,68 @@ function renderQuestionLayout({
 
   document.getElementById("btn-next").addEventListener("click", onNext);
 
-  const questionImg = document.getElementById("question-image");
-  if (questionImg) {
-    enableImageZoomPan(questionImg);
+  attachSinglePngImage(
+    document.getElementById("question-image"),
+    document.getElementById("question-image-wrap"),
+    question.questionImagePath
+  );
+
+  attachSinglePngImage(
+    document.getElementById("explanation-image"),
+    document.getElementById("explanation-image-wrap"),
+    explanationImagePath
+  );
+}
+
+function attachSinglePngImage(imgEl, wrapEl, src) {
+  if (!imgEl || !wrapEl || !src) {
+    if (wrapEl) wrapEl.style.display = "none";
+    return;
   }
 
-  const explanationImg = document.getElementById("explanation-image");
-  if (explanationImg) {
-    enableImageZoomPan(explanationImg);
+  imgEl.onload = () => {
+    wrapEl.style.display = "";
+    enableImageZoomPan(imgEl);
+  };
+
+  imgEl.onerror = () => {
+    wrapEl.style.display = "none";
+  };
+
+  imgEl.src = src;
+}
+
+async function startImagePrecache() {
+  if (appState.imagePrecacheStarted) return;
+  appState.imagePrecacheStarted = true;
+
+  if (!("caches" in window)) return;
+
+  try {
+    const cache = await caches.open(IMAGE_CACHE_NAME);
+
+    for (const problem of appState.problems) {
+      const targets = [
+        problem.questionImagePath,
+        problem.explanationImagePath
+      ].filter(Boolean);
+
+      for (const url of targets) {
+        const exists = await cache.match(url);
+        if (exists) continue;
+
+        try {
+          const res = await fetch(url, { cache: "no-store" });
+          if (res.ok) {
+            await cache.put(url, res.clone());
+          }
+        } catch (e) {
+          // 画像なしは想定内
+        }
+      }
+    }
+  } catch (e) {
+    // 無視
   }
 }
 
