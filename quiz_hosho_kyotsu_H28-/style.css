@@ -30,6 +30,11 @@ body {
     "Hiragino Kaku Gothic ProN", Meiryo, sans-serif;
   font-size: var(--question-font-size);
   font-weight: normal;
+  overscroll-behavior-y: none;
+}
+
+body {
+  overscroll-behavior-y: none;
 }
 
 .hidden {

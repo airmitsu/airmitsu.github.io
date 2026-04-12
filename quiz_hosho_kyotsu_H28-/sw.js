@@ -1,4 +1,4 @@
-const CACHE_NAME = "quiz-pwa-v5";
+const CACHE_NAME = "quiz-pwa-v6";
 
 const urlsToCache = [
   "./",
@@ -34,19 +34,42 @@ self.addEventListener("activate", (event) => {
 });
 
 self.addEventListener("fetch", (event) => {
-  if (event.request.method !== "GET") {
+  if (event.request.method !== "GET") return;
+
+  const url = new URL(event.request.url);
+
+  if (url.origin !== self.location.origin) {
+    event.respondWith(
+      fetch(event.request).catch(() => caches.match(event.request))
+    );
     return;
   }
 
   event.respondWith(
-    fetch(event.request)
-      .then((response) => {
-        const cloned = response.clone();
-        caches.open(CACHE_NAME).then((cache) => {
-          cache.put(event.request, cloned);
+    caches.match(event.request).then((cached) => {
+      if (cached) {
+        return cached;
+      }
+
+      return fetch(event.request)
+        .then((response) => {
+          if (!response || !response.ok) {
+            return response;
+          }
+
+          const cloned = response.clone();
+          caches.open(CACHE_NAME).then((cache) => {
+            cache.put(event.request, cloned);
+          });
+
+          return response;
+        })
+        .catch(async () => {
+          if (event.request.mode === "navigate") {
+            return (await caches.match("./")) || (await caches.match("./index.html"));
+          }
+          return caches.match(event.request);
         });
-        return response;
-      })
-      .catch(() => caches.match(event.request))
+    })
   );
 });

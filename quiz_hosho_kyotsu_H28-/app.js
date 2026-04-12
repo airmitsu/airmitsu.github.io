@@ -48,6 +48,7 @@ async function init() {
   loadSettings();
   loadModeStates();
   applyFontSize();
+  installPullToRefreshBlocker();
 
   renderLoadingScreen("起動中", "設定を読み込んでいます。");
 
@@ -165,6 +166,39 @@ function loadJson(key, fallback) {
   }
 }
 
+async function fetchTextAsset(url) {
+  if ("caches" in window) {
+    try {
+      const cache = await caches.open(APP_CACHE_NAME);
+      const cached = await cache.match(url);
+      if (cached) {
+        return await cached.text();
+      }
+    } catch (e) {
+      // 無視
+    }
+  }
+
+  try {
+    const res = await fetch(url, { cache: "no-store" });
+    if (!res.ok) return null;
+
+    if ("caches" in window) {
+      try {
+        const cache = await caches.open(APP_CACHE_NAME);
+        await cache.put(url, res.clone());
+      } catch (e) {
+        // 無視
+      }
+    }
+
+    return await res.text();
+  } catch (e) {
+    return null;
+  }
+}
+
+
 async function loadProblems() {
   const loaded = [];
   let consecutiveMisses = 0;
@@ -219,21 +253,15 @@ async function loadSingleProblem(indexNumber) {
   const kaiPath = `${PROBLEMS_DIR}/kai${indexNumber}.txt`;
 
   try {
-    const [toiRes, senRes, kaiRes] = await Promise.all([
-      fetch(toiPath, { cache: "no-store" }),
-      fetch(senPath, { cache: "no-store" }),
-      fetch(kaiPath, { cache: "no-store" })
+    const [toiText, senText, kaiText] = await Promise.all([
+      fetchTextAsset(toiPath),
+      fetchTextAsset(senPath),
+      fetchTextAsset(kaiPath)
     ]);
 
-    if (!toiRes.ok || !senRes.ok || !kaiRes.ok) {
+    if (toiText == null || senText == null || kaiText == null) {
       return null;
     }
-
-    const [toiText, senText, kaiText] = await Promise.all([
-      toiRes.text(),
-      senRes.text(),
-      kaiRes.text()
-    ]);
 
     const questionText = normalizeMultilineText(toiText);
     if (!questionText) return null;
@@ -837,15 +865,7 @@ async function precacheProblemTextFiles() {
       for (const url of targets) {
         const exists = await cache.match(url);
         if (exists) continue;
-
-        try {
-          const res = await fetch(url, { cache: "no-store" });
-          if (res.ok) {
-            await cache.put(url, res.clone());
-          }
-        } catch (e) {
-          // 無視
-        }
+        await fetchTextAsset(url);
       }
 
       renderLoadingScreen(
@@ -1053,6 +1073,51 @@ function escapeHtml(str) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
+}
+
+
+function installPullToRefreshBlocker() {
+  document.documentElement.style.overscrollBehaviorY = "none";
+  document.body.style.overscrollBehaviorY = "none";
+
+  let touchStartY = 0;
+  let active = false;
+
+  document.addEventListener(
+    "touchstart",
+    (e) => {
+      if (!e.touches || e.touches.length !== 1) return;
+      const scrollTop =
+        window.pageYOffset ||
+        document.documentElement.scrollTop ||
+        document.body.scrollTop ||
+        0;
+
+      active = scrollTop <= 0;
+      touchStartY = e.touches[0].clientY;
+    },
+    { passive: true }
+  );
+
+  document.addEventListener(
+    "touchmove",
+    (e) => {
+      if (!active || !e.touches || e.touches.length !== 1) return;
+      const currentY = e.touches[0].clientY;
+      if (currentY > touchStartY + 8) {
+        e.preventDefault();
+      }
+    },
+    { passive: false }
+  );
+
+  document.addEventListener(
+    "touchend",
+    () => {
+      active = false;
+    },
+    { passive: true }
+  );
 }
 
 async function registerServiceWorker() {
