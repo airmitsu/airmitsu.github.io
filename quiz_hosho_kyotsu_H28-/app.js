@@ -720,7 +720,9 @@ function renderQuestionLayout({
         ${choices.map((choice, index) => {
           const selectedClass = selectedIndex === index ? " selected" : "";
           const disabledAttr = answered ? "disabled" : "";
-          const choiceLabel = `${index}. ${choice}`;
+          const toZenkaku = (n) => String.fromCharCode(n + 0xFF10);
+          const labelText = index === 0 ? "わからない" : choice;
+          const choiceLabel = `${toZenkaku(index)}：${labelText}`;
           return `
             <button
               class="choice-btn${selectedClass}"
@@ -1075,6 +1077,7 @@ function enableImageZoomPan(img) {
     applyTransform();
   });
 }
+
 document.addEventListener("keydown", (e) => {
   const active = document.activeElement;
   const tag = active && active.tagName ? active.tagName.toUpperCase() : "";
