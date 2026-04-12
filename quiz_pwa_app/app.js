@@ -701,7 +701,12 @@ function renderQuestionLayout({
       </div>
 
       <div class="question-block">
-        <div class="question-text">${escapeHtml(question.questionText).replace(/\n/g, "<br>")}</div>
+        <div class="question-text">
+          ${escapeHtml(question.questionText).replace(/\n/g, "<br>")}
+          <div style="margin-top:6px; font-size:0.8em; color:#5c6b84;">
+            （問題番号：${question.indexNumber}）
+          </div>
+        </div>
 
         <div class="question-image-wrap" id="question-image-wrap" style="display:none;">
           <img alt="問題画像" class="question-image" id="question-image" />
@@ -1060,3 +1065,45 @@ function enableImageZoomPan(img) {
     applyTransform();
   });
 }
+document.addEventListener("keydown", (e) => {
+  const active = document.activeElement;
+  const tag = active && active.tagName ? active.tagName.toUpperCase() : "";
+  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+  if (active && active.isContentEditable) return;
+
+  // 問題画面でのみ有効
+  if (quizScreen.classList.contains("hidden")) return;
+
+  const key = e.key;
+
+  // 0～9 / テンキー数字
+  if (/^[0-9]$/.test(key)) {
+    const buttons = document.querySelectorAll("[data-choice-index]");
+    if (!buttons.length) return;
+
+    const num = Number(key);
+
+    // 0 → 「？ わからない」
+    if (num === 0) {
+      e.preventDefault();
+      buttons[0]?.click();
+      return;
+    }
+
+    // 1 → index1, 2 → index2 ...
+    if (num < buttons.length) {
+      e.preventDefault();
+      buttons[num]?.click();
+      return;
+    }
+  }
+
+  // Enter → 次へ
+  if (key === "Enter") {
+    const nextBtn = document.getElementById("btn-next");
+    if (nextBtn && !nextBtn.disabled) {
+      e.preventDefault();
+      nextBtn.click();
+    }
+  }
+});
