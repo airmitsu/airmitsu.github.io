@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ひらがな図形</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #ffffff;
+    color: #0a1a4a;
+    font-family: 'Hiragino Kaku Gothic ProN', 'Noto Sans JP', sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-height: 100vh;
+    padding: 24px 16px;
+  }
+  h1 { font-size: 1.1rem; letter-spacing: 0.3em; color: #0a1a4a; margin-bottom: 6px; font-weight: 300; }
+  .subtitle { font-size: 0.72rem; color: #4a5a8a; letter-spacing: 0.15em; margin-bottom: 20px; }
+  .canvas-wrap { position: relative; width: 500px; height: 500px; max-width: 92vw; max-height: 92vw; }
+  canvas { width: 100%; height: 100%; border-radius: 50%; background: #f5f7ff; box-shadow: 0 0 40px rgba(10,26,74,0.08); }
+  .controls { margin-top: 20px; display: flex; flex-direction: column; align-items: center; gap: 12px; width: 100%; max-width: 500px; }
+  .input-row { display: flex; gap: 8px; width: 100%; }
+  input[type="text"] {
+    flex: 1; background: #f0f2ff; border: 1px solid #8a9acd; color: #0a1a4a;
+    font-size: 1.2rem; padding: 10px 16px; border-radius: 8px; outline: none;
+    font-family: inherit; letter-spacing: 0.1em; transition: border-color 0.2s;
+  }
+  input[type="text"]:focus { border-color: #0a1a4a; }
+  button {
+    background: #0a1a4a; color: #ffffff; border: 1px solid #0a1a4a;
+    padding: 10px 18px; border-radius: 8px; cursor: pointer; font-size: 0.85rem;
+    font-family: inherit; transition: background 0.2s; white-space: nowrap;
+  }
+  button:hover { background: #1a3080; }
+  .samples { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; }
+  .sample-btn { padding: 5px 12px; font-size: 0.8rem; border-radius: 20px; background: #e8ecff; border: 1px solid #8a9acd; color: #0a1a4a; }
+  .sample-btn:hover { background: #d0d8ff; }
+  .legend { display: flex; flex-wrap: wrap; gap: 8px 16px; justify-content: center; margin-top: 4px; font-size: 0.7rem; color: #4a5a8a; }
+  .legend span { white-space: nowrap; }
+  .info { font-size: 0.75rem; color: #4a5a8a; min-height: 1.2em; letter-spacing: 0.05em; }
+</style>
+</head>
+<body>
+
+<h1>ひらがな図形</h1>
+<p class="subtitle">文字を入力すると、五十音盤上に図形を描くわ</p>
+
+<div class="canvas-wrap">
+  <canvas id="cv" width="500" height="500"></canvas>
+</div>
+
+<div class="controls">
+  <div class="input-row">
+    <input type="text" id="inp" placeholder="ひらがなを入力…" value="ひらがなずけい" autocomplete="off">
+    <button onclick="draw()">描く</button>
+  </div>
+
+  <div class="samples">
+    <button class="sample-btn" onclick="setSample('はつこい')">はつこい</button>
+    <button class="sample-btn" onclick="setSample('さくらじま')">さくらじま</button>
+    <button class="sample-btn" onclick="setSample('かごしま')">かごしま</button>
+    <button class="sample-btn" onclick="setSample('ぽっぷすたー')">ぽっぷすたー</button>
+    <button class="sample-btn" onclick="setSample('こんにちは')">こんにちは</button>
+    <button class="sample-btn" onclick="setSample('どらごん')">どらごん</button>
+  </div>
+
+  <div class="legend">
+    <span>── 通常</span>
+    <span>-･- 小文字（一点鎖線）</span>
+    <span>- - 濁点（点線）</span>
+    <span>〰 長音符（波）</span>
+    <span>⌀ 半濁点（コイル）</span>
+    <span>◠ ん（弧）</span>
+    <span>◎ 同音（葉形）</span>
+  </div>
+
+  <div class="info" id="info"></div>
+</div>
+
+<script>
+const KANA_ORDER = [
+  'あ','い','う','え','お',
+  'か','き','く','け','こ',
+  'さ','し','す','せ','そ',
+  'た','ち','つ','て','と',
+  'な','に','ぬ','ね','の',
+  'は','ひ','ふ','へ','ほ',
+  'ま','み','む','め','も',
+  'や','ゆ','よ',
+  'ら','り','る','れ','ろ',
+  'わ','を','ん'
+];
+
+const DAKUTEN_MAP = {
+  'が':'か','ぎ':'き','ぐ':'く','げ':'け','ご':'こ',
+  'ざ':'さ','じ':'し','ず':'す','ぜ':'せ','ぞ':'そ',
+  'だ':'た','ぢ':'ち','づ':'つ','で':'て','ど':'と',
+  'ば':'は','び':'ひ','ぶ':'ふ','べ':'へ','ぼ':'ほ',
+};
+const HANDAKU_MAP = {
+  'ぱ':'は','ぴ':'ひ','ぷ':'ふ','ぺ':'へ','ぽ':'ほ',
+};
+const KOGAKI_MAP = {
+  'ぁ':'あ','ぃ':'い','ぅ':'う','ぇ':'え','ぉ':'お',
+  'っ':'つ','ゃ':'や','ゅ':'ゆ','ょ':'よ',
+};
+
+const LINE_COLOR = '#0a1a4a';
+const ctx = cv.getContext('2d');
+const W = 500, H = 500, CX = 250, CY = 250;
+const R = 175;      // 線を引く点の円半径
+const LABEL_R = 215; // 文字ラベルの円半径
+const N = KANA_ORDER.length;
+
+function angleOf(kana) {
+  const i = KANA_ORDER.indexOf(kana);
+  if (i < 0) return null;
+  return -Math.PI / 2 + (2 * Math.PI * i) / N;
+}
+function posOf(kana) {
+  const a = angleOf(kana);
+  if (a === null) return null;
+  return { x: CX + R * Math.cos(a), y: CY + R * Math.sin(a) };
+}
+
+function drawBase() {
+  ctx.clearRect(0, 0, W, H);
+  ctx.beginPath();
+  ctx.arc(CX, CY, R, 0, 2 * Math.PI);
+  ctx.strokeStyle = '#0a1a4a';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  KANA_ORDER.forEach((k, i) => {
+    const a = -Math.PI / 2 + (2 * Math.PI * i) / N;
+    const px = CX + R * Math.cos(a);
+    const py = CY + R * Math.sin(a);
+    ctx.beginPath();
+    ctx.arc(px, py, 3, 0, 2 * Math.PI);
+    ctx.fillStyle = '#0a1a4a';
+    ctx.fill();
+    const lr = LABEL_R;
+    ctx.font = '13px Hiragino Kaku Gothic ProN, sans-serif';
+    ctx.fillStyle = '#0a1a4a';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(k, CX + lr * Math.cos(a), CY + lr * Math.sin(a));
+  });
+}
+
+// ── 通常直線
+function drawLine(x1, y1, x2, y2, width=2, dash=[]) {
+  ctx.beginPath();
+  ctx.setLineDash(dash);
+  ctx.moveTo(x1, y1);
+  ctx.lineTo(x2, y2);
+  ctx.strokeStyle = LINE_COLOR;
+  ctx.lineWidth = width;
+  ctx.stroke();
+  ctx.setLineDash([]);
+}
+
+// ── 波線（長音符 ー ～）
+function drawWave(x1, y1, x2, y2) {
+  const steps = 40;
+  const amp = 7;
+  // 線分の法線方向に振動
+  const dx = x2 - x1, dy = y2 - y1;
+  const len = Math.hypot(dx, dy);
+  const nx = -dy / len, ny = dx / len; // 法線
+  ctx.beginPath();
+  ctx.moveTo(x1, y1);
+  for (let s = 1; s <= steps; s++) {
+    const t = s / steps;
+    const bx = x1 + dx * t;
+    const by = y1 + dy * t;
+    const off = Math.sin(t * Math.PI * 7) * amp;
+    ctx.lineTo(bx + nx * off, by + ny * off);
+  }
+  ctx.strokeStyle = LINE_COLOR;
+  ctx.lineWidth = 2;
+  ctx.setLineDash([]);
+  ctx.stroke();
+}
+
+// ── コイル（半濁点）電話線風
+function drawCoil(x1, y1, x2, y2) {
+  const dx = x2 - x1, dy = y2 - y1;
+  const len = Math.hypot(dx, dy);
+  const ux = dx / len, uy = dy / len;
+  const nx = -uy, ny = ux;
+  const coils = Math.max(4, Math.floor(len / 18));
+  const steps = coils * 24;
+  const coilR = 8;
+
+  ctx.beginPath();
+  for (let s = 0; s <= steps; s++) {
+    const t = s / steps;
+    const cx2 = x1 + dx * t;
+    const cy2 = y1 + dy * t;
+    const angle = t * coils * 2 * Math.PI;
+    const ox = nx * Math.sin(angle) * coilR;
+    const oy = ny * Math.sin(angle) * coilR;
+    const depth = Math.cos(angle) * coilR * 0.3; // 奥行き感
+    s === 0 ? ctx.moveTo(cx2 + ox, cy2 + oy) : ctx.lineTo(cx2 + ox, cy2 + oy);
+  }
+  ctx.strokeStyle = LINE_COLOR;
+  ctx.lineWidth = 1.8;
+  ctx.setLineDash([]);
+  ctx.stroke();
+  // 終点へ繋ぐ
+  ctx.beginPath();
+  ctx.moveTo(x1 + nx * 0, y1 + ny * 0);
+  ctx.lineTo(x1, y1);
+  ctx.strokeStyle = LINE_COLOR;
+}
+
+// ── レンズ形（同音連続）：点 ↔ 円の中心を2本の弧で結ぶ
+function drawLeaf(x, y) {
+  // x,y = 文字の点、中心 = CX,CY
+  const dx = CX - x, dy = CY - y;
+  const len = Math.hypot(dx, dy) || 1;
+  const ux = dx / len, uy = dy / len; // 点→中心の単位ベクトル
+  const nx = -uy, ny = ux;           // 法線
+  const bow = len * 0.35;             // 弧の膨らみ量
+
+  // 制御点：法線方向に bow だけずらす
+  const mx = x + dx * 0.5, my = y + dy * 0.5; // 中間点
+
+  // 弧1（左側）
+  ctx.beginPath();
+  ctx.moveTo(x, y);
+  ctx.quadraticCurveTo(mx + nx * bow, my + ny * bow, CX, CY);
+  ctx.strokeStyle = LINE_COLOR;
+  ctx.lineWidth = 1.8;
+  ctx.setLineDash([]);
+  ctx.stroke();
+
+  // 弧2（右側）
+  ctx.beginPath();
+  ctx.moveTo(x, y);
+  ctx.quadraticCurveTo(mx - nx * bow, my - ny * bow, CX, CY);
+  ctx.strokeStyle = LINE_COLOR;
+  ctx.lineWidth = 1.8;
+  ctx.stroke();
+}
+
+// ── 弧（ん）
+function drawArc(x1, y1, x2, y2) {
+  const mpx = (x1 + x2) / 2;
+  const mpy = (y1 + y2) / 2;
+  const dx = x2 - x1, dy = y2 - y1;
+  const nx = -dy * 0.4, ny = dx * 0.4;
+  ctx.beginPath();
+  ctx.moveTo(x1, y1);
+  ctx.quadraticCurveTo(mpx + nx, mpy + ny, x2, y2);
+  ctx.strokeStyle = LINE_COLOR;
+  ctx.lineWidth = 2;
+  ctx.setLineDash([]);
+  ctx.stroke();
+}
+
+// ── 一点鎖線（小文字）
+function drawDashDot(x1, y1, x2, y2) {
+  // 手動で一点鎖線を描く（長ダッシュ・短点・長ダッシュ…）
+  const dx = x2 - x1, dy = y2 - y1;
+  const len = Math.hypot(dx, dy);
+  const ux = dx / len, uy = dy / len;
+  const dashLen = 12, dotLen = 2, gap = 4;
+  const unit = dashLen + gap + dotLen + gap;
+
+  ctx.strokeStyle = LINE_COLOR;
+  ctx.lineWidth = 1.8;
+  ctx.setLineDash([]);
+
+  let pos = 0;
+  while (pos < len) {
+    // 長ダッシュ
+    const d1s = pos, d1e = Math.min(pos + dashLen, len);
+    ctx.beginPath();
+    ctx.moveTo(x1 + ux * d1s, y1 + uy * d1s);
+    ctx.lineTo(x1 + ux * d1e, y1 + uy * d1e);
+    ctx.stroke();
+    pos += dashLen + gap;
+    if (pos >= len) break;
+    // 点
+    const d2s = pos, d2e = Math.min(pos + dotLen, len);
+    ctx.beginPath();
+    ctx.moveTo(x1 + ux * d2s, y1 + uy * d2s);
+    ctx.lineTo(x1 + ux * d2e, y1 + uy * d2e);
+    ctx.stroke();
+    pos += dotLen + gap;
+  }
+}
+
+function highlightPoint(x, y, color='#0a1a4a', r=5) {
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, 2 * Math.PI);
+  ctx.fillStyle = color;
+  ctx.fill();
+}
+
+function parseText(text) {
+  const tokens = [];
+  for (const ch of text) {
+    if (KANA_ORDER.includes(ch)) {
+      tokens.push({ base: ch, type: ch === 'ん' ? 'n' : 'normal' });
+    } else if (DAKUTEN_MAP[ch]) {
+      tokens.push({ base: DAKUTEN_MAP[ch], type: 'dakuten' });
+    } else if (HANDAKU_MAP[ch]) {
+      tokens.push({ base: HANDAKU_MAP[ch], type: 'handaku' });
+    } else if (KOGAKI_MAP[ch]) {
+      tokens.push({ base: KOGAKI_MAP[ch], type: 'kogaki' });
+    } else if (ch === 'ー' || ch === '～' || ch === '〜' || ch.charCodeAt(0) === 0x301C || ch.charCodeAt(0) === 0xFF5E) {
+      tokens.push({ base: null, type: 'chouon' });
+    }
+    // それ以外は無視
+  }
+  return tokens;
+}
+
+function buildPoints(tokens) {
+  const points = [];
+  let nextSegType = null;
+  for (let i = 0; i < tokens.length; i++) {
+    const t = tokens[i];
+    if (t.type === 'chouon') {
+      nextSegType = 'chouon';
+      continue;
+    }
+    const pos = posOf(t.base);
+    if (!pos) continue;
+    const segType = nextSegType || t.type;
+    nextSegType = null;
+    points.push({ x: pos.x, y: pos.y, kana: t.base, type: t.type, segType });
+  }
+  // 末尾に残ったchouonフラグを閉合線用に持ち出す
+  return { points, closeSegType: nextSegType };
+}
+
+function randomPastel() {
+  const h = Math.floor(Math.random() * 360);
+  return `hsla(${h}, 70%, 75%, 0.35)`;
+}
+
+function fillShape(points) {
+  if (points.length < 3) return;
+  ctx.beginPath();
+  ctx.moveTo(points[0].x, points[0].y);
+  for (let i = 1; i < points.length; i++) {
+    ctx.lineTo(points[i].x, points[i].y);
+  }
+  ctx.closePath();
+  ctx.fillStyle = randomPastel();
+  ctx.fill();
+}
+
+function drawSegments(points, closeSegType) {
+  if (points.length === 0) return;
+
+  // 塗りつぶし（線の下に）
+  fillShape(points);
+
+  // 閉合ノードを末尾に追加（末尾→先頭の線種をcloseSegTypeで）
+  const drawList = [...points];
+  if (points.length >= 2) {
+    drawList.push({ ...points[0], segType: closeSegType || 'normal', _close: true });
+  }
+
+  for (let i = 1; i < drawList.length; i++) {
+    const p = drawList[i - 1];
+    const q = drawList[i];
+    const seg = q.segType || q.type;
+    const same = (Math.abs(p.x - q.x) < 1 && Math.abs(p.y - q.y) < 1);
+
+    if (same) {
+      drawLeaf(q.x, q.y);
+    } else if (seg === 'handaku') {
+      drawCoil(p.x, p.y, q.x, q.y);
+    } else if (seg === 'dakuten') {
+      drawLine(p.x, p.y, q.x, q.y, 2, [6, 5]);
+    } else if (seg === 'kogaki') {
+      drawDashDot(p.x, p.y, q.x, q.y);
+    } else if (seg === 'chouon') {
+      drawWave(p.x, p.y, q.x, q.y);
+    } else if (seg === 'n') {
+      drawArc(p.x, p.y, q.x, q.y);
+    } else {
+      drawLine(p.x, p.y, q.x, q.y, 2);
+    }
+  }
+}
+
+function draw() {
+  const text = document.getElementById('inp').value.trim();
+  drawBase();
+
+  if (!text) { document.getElementById('info').textContent = ''; return; }
+
+  const tokens = parseText(text);
+  if (tokens.length === 0) { document.getElementById('info').textContent = '対応文字がないわ'; return; }
+
+  const { points, closeSegType } = buildPoints(tokens);
+  if (points.length === 0) return;
+
+  drawSegments(points, closeSegType);
+
+  // 点を打つ
+  points.forEach((p, i) => {
+    highlightPoint(p.x, p.y, '#0a1a4a');
+  });
+  highlightPoint(points[0].x, points[0].y, '#0a1a4a');
+
+  // info表示
+  const labels = tokens.map(t => {
+    if (t.type === 'chouon') return 'ー';
+    const suffix = { dakuten: '゛', handaku: '゜', kogaki: '(小)', n: '', normal: '' }[t.type] || '';
+    return t.base + suffix;
+  });
+  document.getElementById('info').textContent = labels.join(' → ');
+}
+
+function setSample(s) {
+  document.getElementById('inp').value = s;
+  draw();
+}
+
+drawBase();
+draw();
+
+document.getElementById('inp').addEventListener('input', () => draw());
+document.getElementById('inp').addEventListener('keydown', e => {
+  if (e.key === 'Enter') draw();
+});
+</script>
+</body>
+</html>
