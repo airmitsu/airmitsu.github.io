@@ -54,26 +54,20 @@
 <div class="controls">
   <div class="input-row">
     <input type="text" id="inp" placeholder="ひらがなを入力…" value="ひらがなずけい" autocomplete="off">
-    <button onclick="draw()">描く</button>
   </div>
 
   <div class="samples">
-    <button class="sample-btn" onclick="setSample('はつこい')">はつこい</button>
-    <button class="sample-btn" onclick="setSample('さくらじま')">さくらじま</button>
     <button class="sample-btn" onclick="setSample('かごしま')">かごしま</button>
-    <button class="sample-btn" onclick="setSample('ぽっぷすたー')">ぽっぷすたー</button>
-    <button class="sample-btn" onclick="setSample('こんにちは')">こんにちは</button>
-    <button class="sample-btn" onclick="setSample('どらごん')">どらごん</button>
-  </div>
-
-  <div class="legend">
-    <span>── 通常</span>
-    <span>-･- 小文字（一点鎖線）</span>
-    <span>- - 濁点（点線）</span>
-    <span>〰 長音符（波）</span>
-    <span>⌀ 半濁点（コイル）</span>
-    <span>◠ ん（弧）</span>
-    <span>◎ 同音（葉形）</span>
+    <button class="sample-btn" onclick="setSample('さくらじま')">さくらじま</button>
+    <button class="sample-btn" onclick="setSample('くろぶた')">くろぶた</button>
+    <button class="sample-btn" onclick="setSample('ちりりんろーど')">ちりりんろーど</button>
+    <button class="sample-btn" onclick="setSample('きんこーわん')">きんこーわん</button>
+    <button class="sample-btn" onclick="setSample('いーぶい')">いーぶい</button>
+    <button class="sample-btn" onclick="setSample('くれいんぱーく')">くれいんぱーく</button>
+    <button class="sample-btn" onclick="setSample('いっしー')">いっしー</button>
+    <button class="sample-btn" onclick="setSample('すんくじら')">すんくじら</button>
+    <button class="sample-btn" onclick="setSample('おやっとさぁー')">おやっとさぁー</button>
+    <button class="sample-btn" onclick="setSample('んだもしたん')">んだもしたん</button>
   </div>
 
   <div class="info" id="info"></div>
@@ -150,101 +144,120 @@ function drawBase() {
   });
 }
 
-// ── 通常直線
-function drawLine(x1, y1, x2, y2, width=2, dash=[]) {
+// ── 線種ヘルパー：lineTypeに応じてdashをセット
+function applyLineStyle(lineType, width=2) {
+  ctx.lineWidth = width;
+  ctx.strokeStyle = LINE_COLOR;
+  if (lineType === 'dakuten') {
+    ctx.setLineDash([]); // 二重線は別処理
+  } else if (lineType === 'handaku') {
+    ctx.setLineDash([12, 4, 2, 4]);
+  } else if (lineType === 'kogaki') {
+    ctx.setLineDash([4, 5]);
+  } else {
+    ctx.setLineDash([]);
+  }
+}
+
+// 二重線を引く
+function drawDouble(x1, y1, x2, y2) {
+  const dx = x2 - x1, dy = y2 - y1;
+  const len = Math.hypot(dx, dy);
+  const nx = -dy / len * 2.5, ny = dx / len * 2.5;
+  ctx.strokeStyle = LINE_COLOR;
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([]);
+  for (const s of [-1, 1]) {
+    ctx.beginPath();
+    ctx.moveTo(x1 + nx * s, y1 + ny * s);
+    ctx.lineTo(x2 + nx * s, y2 + ny * s);
+    ctx.stroke();
+  }
+}
+
+// 通常直線（線種付き）
+function drawLine(x1, y1, x2, y2, lineType='normal') {
+  if (lineType === 'dakuten') { drawDouble(x1, y1, x2, y2); return; }
   ctx.beginPath();
-  ctx.setLineDash(dash);
+  applyLineStyle(lineType);
   ctx.moveTo(x1, y1);
   ctx.lineTo(x2, y2);
-  ctx.strokeStyle = LINE_COLOR;
-  ctx.lineWidth = width;
   ctx.stroke();
   ctx.setLineDash([]);
 }
 
-// ── 波線（長音符 ー ～）
-function drawWave(x1, y1, x2, y2) {
-  const steps = 40;
-  const amp = 7;
-  // 線分の法線方向に振動
+// 波線（線種付き）
+function drawWave(x1, y1, x2, y2, lineType='normal') {
+  const steps = 40, amp = 7;
   const dx = x2 - x1, dy = y2 - y1;
   const len = Math.hypot(dx, dy);
-  const nx = -dy / len, ny = dx / len; // 法線
-  ctx.beginPath();
-  ctx.moveTo(x1, y1);
-  for (let s = 1; s <= steps; s++) {
-    const t = s / steps;
-    const bx = x1 + dx * t;
-    const by = y1 + dy * t;
-    const off = Math.sin(t * Math.PI * 7) * amp;
-    ctx.lineTo(bx + nx * off, by + ny * off);
-  }
-  ctx.strokeStyle = LINE_COLOR;
-  ctx.lineWidth = 2;
-  ctx.setLineDash([]);
-  ctx.stroke();
-}
-
-// ── コイル（半濁点）電話線風
-function drawCoil(x1, y1, x2, y2) {
-  const dx = x2 - x1, dy = y2 - y1;
-  const len = Math.hypot(dx, dy);
-  const ux = dx / len, uy = dy / len;
-  const nx = -uy, ny = ux;
-  const coils = Math.max(4, Math.floor(len / 18));
-  const steps = coils * 24;
-  const coilR = 8;
-
-  ctx.beginPath();
+  const nx = -dy / len, ny = dx / len;
+  const pts = [];
   for (let s = 0; s <= steps; s++) {
     const t = s / steps;
-    const cx2 = x1 + dx * t;
-    const cy2 = y1 + dy * t;
-    const angle = t * coils * 2 * Math.PI;
-    const ox = nx * Math.sin(angle) * coilR;
-    const oy = ny * Math.sin(angle) * coilR;
-    const depth = Math.cos(angle) * coilR * 0.3; // 奥行き感
-    s === 0 ? ctx.moveTo(cx2 + ox, cy2 + oy) : ctx.lineTo(cx2 + ox, cy2 + oy);
+    const off = Math.sin(t * Math.PI * 7) * amp;
+    pts.push({ x: x1 + dx * t + nx * off, y: y1 + dy * t + ny * off });
   }
-  ctx.strokeStyle = LINE_COLOR;
-  ctx.lineWidth = 1.8;
-  ctx.setLineDash([]);
-  ctx.stroke();
-  // 終点へ繋ぐ
-  ctx.beginPath();
-  ctx.moveTo(x1 + nx * 0, y1 + ny * 0);
-  ctx.lineTo(x1, y1);
-  ctx.strokeStyle = LINE_COLOR;
+  if (lineType === 'dakuten') {
+    // 二重波線
+    const nx2 = -dy / len * 2.5, ny2 = dx / len * 2.5;
+    for (const s of [-1, 1]) {
+      ctx.beginPath();
+      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = LINE_COLOR;
+      ctx.setLineDash([]);
+      pts.forEach((p, i) => i === 0 ? ctx.moveTo(p.x + nx2*s, p.y + ny2*s) : ctx.lineTo(p.x + nx2*s, p.y + ny2*s));
+      ctx.stroke();
+    }
+  } else {
+    ctx.beginPath();
+    applyLineStyle(lineType);
+    pts.forEach((p, i) => i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y));
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
 }
 
-// ── レンズ形（同音連続）：点 ↔ 円の中心を2本の弧で結ぶ
-function drawLeaf(x, y) {
-  // x,y = 文字の点、中心 = CX,CY
+// レンズ形（同音連続）
+function drawLeaf(x, y, lineType='normal', color) {
   const dx = CX - x, dy = CY - y;
   const len = Math.hypot(dx, dy) || 1;
-  const ux = dx / len, uy = dy / len; // 点→中心の単位ベクトル
-  const nx = -uy, ny = ux;           // 法線
-  const bow = len * 0.35;             // 弧の膨らみ量
+  const nx = -dy / len, ny = dx / len;
+  const bow = len * 0.35;
+  const mx = x + dx * 0.5, my = y + dy * 0.5;
 
-  // 制御点：法線方向に bow だけずらす
-  const mx = x + dx * 0.5, my = y + dy * 0.5; // 中間点
-
-  // 弧1（左側）
+  // 塗りつぶし
   ctx.beginPath();
   ctx.moveTo(x, y);
   ctx.quadraticCurveTo(mx + nx * bow, my + ny * bow, CX, CY);
-  ctx.strokeStyle = LINE_COLOR;
-  ctx.lineWidth = 1.8;
-  ctx.setLineDash([]);
-  ctx.stroke();
+  ctx.quadraticCurveTo(mx - nx * bow, my - ny * bow, x, y);
+  ctx.closePath();
+  ctx.fillStyle = color || randomPastel();
+  ctx.fill();
 
-  // 弧2（右側）
-  ctx.beginPath();
-  ctx.moveTo(x, y);
-  ctx.quadraticCurveTo(mx - nx * bow, my - ny * bow, CX, CY);
-  ctx.strokeStyle = LINE_COLOR;
-  ctx.lineWidth = 1.8;
-  ctx.stroke();
+  // 輪郭
+  if (lineType === 'dakuten') {
+    for (const s of [-1, 1]) {
+      for (const off of [-2, 2]) {
+        ctx.beginPath();
+        ctx.moveTo(x + nx*off, y + ny*off);
+        ctx.quadraticCurveTo(mx + nx*(bow*s+off), my + ny*(bow*s+off), CX + nx*off, CY + ny*off);
+        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = LINE_COLOR;
+        ctx.setLineDash([]);
+        ctx.stroke();
+      }
+    }
+  } else {
+    [1, -1].forEach(s => {
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.quadraticCurveTo(mx + nx * bow * s, my + ny * bow * s, CX, CY);
+      applyLineStyle(lineType, 1.8);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    });
+  }
 }
 
 // ── 弧（ん）
@@ -323,47 +336,69 @@ function parseText(text) {
 
 function buildPoints(tokens) {
   const points = [];
-  let nextSegType = null;
+  let pendingSegType = null;
   for (let i = 0; i < tokens.length; i++) {
     const t = tokens[i];
     if (t.type === 'chouon') {
-      nextSegType = 'chouon';
+      // 長音符：前の線種を引き継いで波線にする（ただし波線フラグは別途管理）
+      // 次の文字への線を波線にするが、その前の線種も保持
+      pendingSegType = pendingSegType ? pendingSegType + '_wave' : 'chouon';
       continue;
     }
     const pos = posOf(t.base);
     if (!pos) continue;
-    const segType = nextSegType || t.type;
-    nextSegType = null;
+    const segType = pendingSegType || 'normal';
+    pendingSegType = null;
+    if (['dakuten','handaku','kogaki'].includes(t.type)) {
+      pendingSegType = t.type;
+    }
     points.push({ x: pos.x, y: pos.y, kana: t.base, type: t.type, segType });
   }
-  // 末尾に残ったchouonフラグを閉合線用に持ち出す
-  return { points, closeSegType: nextSegType };
+  return { points, closeSegType: pendingSegType };
 }
 
 function randomPastel() {
   const h = Math.floor(Math.random() * 360);
-  return `hsla(${h}, 70%, 75%, 0.35)`;
+  return `hsla(${h}, 60%, 85%, 1)`;
 }
 
-function fillShape(points) {
+function addWavePath(x1, y1, x2, y2) {
+  const steps = 40, amp = 7;
+  const dx = x2 - x1, dy = y2 - y1;
+  const len = Math.hypot(dx, dy);
+  const nx = -dy / len, ny = dx / len;
+  for (let s = 1; s <= steps; s++) {
+    const t = s / steps;
+    const off = Math.sin(t * Math.PI * 7) * amp;
+    ctx.lineTo(x1 + dx * t + nx * off, y1 + dy * t + ny * off);
+  }
+}
+
+function fillShape(points, closeSegType, color) {
   if (points.length < 3) return;
+  const drawList = [...points, { ...points[0], segType: closeSegType || 'normal' }];
   ctx.beginPath();
-  ctx.moveTo(points[0].x, points[0].y);
-  for (let i = 1; i < points.length; i++) {
-    ctx.lineTo(points[i].x, points[i].y);
+  ctx.moveTo(drawList[0].x, drawList[0].y);
+  for (let i = 1; i < drawList.length; i++) {
+    const p = drawList[i - 1], q = drawList[i];
+    const seg = q.segType || q.type;
+    if (seg === 'chouon' || seg.endsWith('_wave')) {
+      addWavePath(p.x, p.y, q.x, q.y);
+    } else {
+      ctx.lineTo(q.x, q.y);
+    }
   }
   ctx.closePath();
-  ctx.fillStyle = randomPastel();
+  ctx.fillStyle = color;
   ctx.fill();
 }
 
 function drawSegments(points, closeSegType) {
   if (points.length === 0) return;
 
-  // 塗りつぶし（線の下に）
-  fillShape(points);
+  const color = randomPastel();
+  fillShape(points, closeSegType, color);
 
-  // 閉合ノードを末尾に追加（末尾→先頭の線種をcloseSegTypeで）
   const drawList = [...points];
   if (points.length >= 2) {
     drawList.push({ ...points[0], segType: closeSegType || 'normal', _close: true });
@@ -373,22 +408,16 @@ function drawSegments(points, closeSegType) {
     const p = drawList[i - 1];
     const q = drawList[i];
     const seg = q.segType || q.type;
-    const same = (Math.abs(p.x - q.x) < 1 && Math.abs(p.y - q.y) < 1);
+    const same = !q._close && (p.kana === q.kana);
+    const isWave = seg === 'chouon' || seg.endsWith('_wave');
+    const baseType = isWave ? seg.replace('_wave','') || 'normal' : seg;
 
     if (same) {
-      drawLeaf(q.x, q.y);
-    } else if (seg === 'handaku') {
-      drawCoil(p.x, p.y, q.x, q.y);
-    } else if (seg === 'dakuten') {
-      drawLine(p.x, p.y, q.x, q.y, 2, [6, 5]);
-    } else if (seg === 'kogaki') {
-      drawDashDot(p.x, p.y, q.x, q.y);
-    } else if (seg === 'chouon') {
-      drawWave(p.x, p.y, q.x, q.y);
-    } else if (seg === 'n') {
-      drawArc(p.x, p.y, q.x, q.y);
+      drawLeaf(q.x, q.y, baseType, color);
+    } else if (isWave) {
+      drawWave(p.x, p.y, q.x, q.y, baseType);
     } else {
-      drawLine(p.x, p.y, q.x, q.y, 2);
+      drawLine(p.x, p.y, q.x, q.y, baseType);
     }
   }
 }
